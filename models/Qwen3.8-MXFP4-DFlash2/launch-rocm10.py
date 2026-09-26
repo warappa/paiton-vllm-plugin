@@ -41,12 +41,17 @@ def release_command(release):
          #'--backend', 'triton',
         '--language-model-only',
         '--kv-cache-memory-bytes', str(cache), '--gpu-memory-utilization', '0.98',
-        '--no-enable-prefix-caching', '--enable-chunked-prefill',
+        '--no-enable-prefix-caching', 
+        '--enable-chunked-prefill',
         '--safetensors-load-strategy', 'lazy', '--attention-backend', 'R4D',
         '--compilation-config', json.dumps(compilation),
         '--speculative-config', json.dumps(speculative), '--mamba-cache-mode', mamba,
-        '--mamba-cache-dtype', 'bfloat16', '--mamba-ssm-cache-dtype', 'float16',
-        '--no-async-scheduling', '--enable-auto-tool-choice',
+        '--mamba-cache-dtype', 'bfloat16', '--mamba-ssm-cache-dtype', 'bfloat16',
+        
+        '--no-async-scheduling', 
+        #'--async-scheduling', # not supported if disable_padded_drafter_batch is enabled
+        
+        '--enable-auto-tool-choice',
         '--tool-call-parser', 'qwen3_coder', '--reasoning-parser', 'qwen3',
         '--override-generation-config', json.dumps({'temperature': 0.7, 'top_p': 0.95, 'top_k': 20}),
         '--seed', '42',
@@ -187,6 +192,7 @@ def engine_command(args):
     default_context = 200000 if chat else (32768 if desktop else None)
     context = args.context if args.context is not None else default_context
     sequences = args.max_num_seqs if args.max_num_seqs is not None else (1 if compact_graphs else None)
+    # don't increase max_num_batched_tokens, keep it at 1024 or tool calling gets buggy quickly!
     batched_tokens = args.max_num_batched_tokens if args.max_num_batched_tokens is not None else (1024 if compact_graphs else None)
     default_budget = 0.98 if chat else (0.90 if desktop else None)
     budget = args.gpu_memory_utilization if args.gpu_memory_utilization is not None else default_budget
