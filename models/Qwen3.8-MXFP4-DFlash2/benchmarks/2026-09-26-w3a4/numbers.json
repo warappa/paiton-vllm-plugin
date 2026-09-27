@@ -1,0 +1,924 @@
+{
+ "hardware": "Radeon AI PRO R9700 (gfx1201), 300 W",
+ "runtime": "vLLM 0.29 / ROCm 10",
+ "model": "Qwen3.8-MXFP4-DFlash2",
+ "benchmark": "BetterBench 0.6.0 quick (schema 2, corpus 1.0)",
+ "context": 65536,
+ "maximum_sequences": 8,
+ "prefix_caching": false,
+ "ngram_codraft": false,
+ "sampling": {
+  "temperature": 0.7,
+  "top_p": 0.95,
+  "top_k": 20,
+  "seed": 42,
+  "thinking": false
+ },
+ "profile": {
+  "decode_scored_per_category": 5,
+  "decode_warmup_per_category": 1,
+  "concurrency_requests_per_level": 48,
+  "prefill_scored_per_depth": 8,
+  "prefill_warmup_per_depth": 2,
+  "prefill_max_tokens": 16,
+  "greedy_gate_prompts": 12,
+  "fresh_process_per_run": true,
+  "runs_per_arm": 2,
+  "weighted_decode_weights": {
+   "code": 0.3,
+   "reasoning": 0.2,
+   "prose": 0.15,
+   "json": 0.15,
+   "file_edit": 0.1,
+   "summarization": 0.1
+  }
+ },
+ "environment_all_arms": {
+  "GPU_MAX_HW_QUEUES": "1",
+  "PYTORCH_ALLOC_CONF": "max_split_size_mb:64"
+ },
+ "arms": {
+  "release_20260924_mxfp4": {
+   "description": "Previous release, MXFP4 weights",
+   "image": {
+    "tag": "ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260924-r3",
+    "digest": "sha256:c2511888b76abf463c7f5c51f0c70bf66c593f3c2fca8d910765d85318d399ce"
+   },
+   "weights": "mxfp4"
+  },
+  "mxfp4_20260926": {
+   "description": "This round's runtime changes (fused GDN verify, GPU_MAX_HW_QUEUES=1) with MXFP4 weights, measured on an MXFP4-only build",
+   "image": {
+    "build": "unpublished MXFP4-only build of this round's runtime (equivalent to the 26 September image with --weights mxfp4)"
+   },
+   "weights": "mxfp4"
+  },
+  "w3a4_20260926": {
+   "description": "26 September release image with the 3-bit W3A4 weights",
+   "image": {
+    "tag": "ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1",
+    "digest": "sha256:c4134aba665f6dd3b89354a43be2b5b814f7078db456351647a3f1b106a0da49"
+   },
+   "weights": "w3a4",
+   "w3a4_weights": "EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4",
+   "w3a4_weights_calibration_in_these_runs": "earlier calibration of the same 3-bit format"
+  }
+ },
+ "final": {
+  "sequence": [
+   "release_20260924_mxfp4",
+   "mxfp4_20260926",
+   "w3a4_20260926",
+   "release_20260924_mxfp4",
+   "mxfp4_20260926",
+   "w3a4_20260926"
+  ],
+  "runs": {
+   "release_20260924_mxfp4": [
+    {
+     "arm": "release_20260924_mxfp4",
+     "sequence_index": 0,
+     "benchmark_started": "2026-09-26T16:16:00+0000",
+     "metrics": {
+      "weighted_decode": 153.18246835230048,
+      "C1": 121.16946978811154,
+      "C2": 201.2917624322051,
+      "C4": 304.0364823666962,
+      "C8": 427.00857873395233,
+      "prefill_2000": 3689.597694638126,
+      "prefill_8000": 3834.67602352246,
+      "prefill_16000": 3869.656228319024,
+      "prefill_32000": 3751.2008850745615,
+      "prefill_64000": 3454.890408476817,
+      "prefill_ttft_p50_ms_2000": 407.596318051219,
+      "prefill_ttft_p50_ms_8000": 1548.5173469642177,
+      "prefill_ttft_p50_ms_16000": 3055.7239140034653,
+      "prefill_ttft_p50_ms_32000": 6270.965850446373,
+      "prefill_ttft_p50_ms_64000": 13622.171042545233
+     },
+     "decode_categories": [
+      {
+       "category": "chat",
+       "runs": 5,
+       "ttft_p50": 91.31512010935694,
+       "decode_med": 120.95316255070767
+      },
+      {
+       "category": "code",
+       "runs": 5,
+       "ttft_p50": 89.17513396590948,
+       "decode_med": 179.48622695176988
+      },
+      {
+       "category": "file_edit",
+       "runs": 5,
+       "ttft_p50": 91.31931106094271,
+       "decode_med": 179.41392870178518
+      },
+      {
+       "category": "json",
+       "runs": 5,
+       "ttft_p50": 88.93121406435966,
+       "decode_med": 216.73297290916452
+      },
+      {
+       "category": "math",
+       "runs": 5,
+       "ttft_p50": 88.66143098566681,
+       "decode_med": 183.3157802368197
+      },
+      {
+       "category": "prose",
+       "runs": 5,
+       "ttft_p50": 53.488511010073125,
+       "decode_med": 77.15329984829053
+      },
+      {
+       "category": "reasoning",
+       "runs": 5,
+       "ttft_p50": 88.65231997333467,
+       "decode_med": 117.48203054211167
+      },
+      {
+       "category": "summarization",
+       "runs": 5,
+       "ttft_p50": 92.32701396103948,
+       "decode_med": 138.15860374550414
+      }
+     ],
+     "scored_requests_ok": {
+      "decode": "40/40",
+      "concurrency": "192/192",
+      "prefill": "40/40"
+     },
+     "c1_decode_forward_ms_median": 28.3,
+     "startup_s": 212.1,
+     "betterbench_rc": 0,
+     "post_benchmark_greedy_matches": 12,
+     "greedy_matches_vs_first_release_20260924_run": 12
+    },
+    {
+     "arm": "release_20260924_mxfp4",
+     "sequence_index": 3,
+     "benchmark_started": "2026-09-26T17:00:26+0000",
+     "metrics": {
+      "weighted_decode": 154.34763950261544,
+      "C1": 122.73413226183955,
+      "C2": 207.04977183894684,
+      "C4": 312.3519447203215,
+      "C8": 423.6022145941499,
+      "prefill_2000": 3688.9738125218846,
+      "prefill_8000": 3833.6918091721127,
+      "prefill_16000": 3871.4570343591076,
+      "prefill_32000": 3751.784321894479,
+      "prefill_64000": 3455.6500307017986,
+      "prefill_ttft_p50_ms_2000": 407.30962000088766,
+      "prefill_ttft_p50_ms_8000": 1547.5763090071268,
+      "prefill_ttft_p50_ms_16000": 3053.383339487482,
+      "prefill_ttft_p50_ms_32000": 6269.627997477073,
+      "prefill_ttft_p50_ms_64000": 13613.424520939589
+     },
+     "decode_categories": [
+      {
+       "category": "chat",
+       "runs": 5,
+       "ttft_p50": 91.3318688981235,
+       "decode_med": 121.52683143811754
+      },
+      {
+       "category": "code",
+       "runs": 5,
+       "ttft_p50": 88.4552700445056,
+       "decode_med": 180.37647473487598
+      },
+      {
+       "category": "file_edit",
+       "runs": 5,
+       "ttft_p50": 91.55925607774407,
+       "decode_med": 180.28869739428427
+      },
+      {
+       "category": "json",
+       "runs": 5,
+       "ttft_p50": 88.68698601145297,
+       "decode_med": 218.2425759689652
+      },
+      {
+       "category": "math",
+       "runs": 5,
+       "ttft_p50": 88.45734701026231,
+       "decode_med": 184.23679745590402
+      },
+      {
+       "category": "prose",
+       "runs": 5,
+       "ttft_p50": 53.28829097561538,
+       "decode_med": 79.84503124263941
+      },
+      {
+       "category": "reasoning",
+       "runs": 5,
+       "ttft_p50": 88.56917207594961,
+       "decode_med": 118.0929773240829
+      },
+      {
+       "category": "summarization",
+       "runs": 5,
+       "ttft_p50": 92.70373801700771,
+       "decode_med": 138.74090796166948
+      }
+     ],
+     "scored_requests_ok": {
+      "decode": "40/40",
+      "concurrency": "192/192",
+      "prefill": "40/40"
+     },
+     "c1_decode_forward_ms_median": 28.4,
+     "startup_s": 210.0,
+     "betterbench_rc": 0,
+     "post_benchmark_greedy_matches": 12,
+     "greedy_matches_vs_first_release_20260924_run": 12
+    }
+   ],
+   "mxfp4_20260926": [
+    {
+     "arm": "mxfp4_20260926",
+     "sequence_index": 1,
+     "benchmark_started": "2026-09-26T16:31:19+0000",
+     "metrics": {
+      "weighted_decode": 155.97956511254125,
+      "C1": 123.39954526207123,
+      "C2": 208.44753319221908,
+      "C4": 313.69125580422286,
+      "C8": 428.30096441462524,
+      "prefill_2000": 3690.8908100668477,
+      "prefill_8000": 3833.919989800829,
+      "prefill_16000": 3871.493107429956,
+      "prefill_32000": 3750.682689148496,
+      "prefill_64000": 3455.0787227196934,
+      "prefill_ttft_p50_ms_2000": 407.48750092461705,
+      "prefill_ttft_p50_ms_8000": 1548.777976015117,
+      "prefill_ttft_p50_ms_16000": 3054.055901011452,
+      "prefill_ttft_p50_ms_32000": 6271.50597498985,
+      "prefill_ttft_p50_ms_64000": 13621.975267014932
+     },
+     "decode_categories": [
+      {
+       "category": "chat",
+       "runs": 5,
+       "ttft_p50": 91.66778903454542,
+       "decode_med": 122.96996485967183
+      },
+      {
+       "category": "code",
+       "runs": 5,
+       "ttft_p50": 89.35228793416172,
+       "decode_med": 182.86147284559314
+      },
+      {
+       "category": "file_edit",
+       "runs": 5,
+       "ttft_p50": 91.56434296164662,
+       "decode_med": 182.73933318495187
+      },
+      {
+       "category": "json",
+       "runs": 5,
+       "ttft_p50": 89.20485991984606,
+       "decode_med": 220.9343750293859
+      },
+      {
+       "category": "math",
+       "runs": 5,
+       "ttft_p50": 88.93035002984107,
+       "decode_med": 186.7018413037219
+      },
+      {
+       "category": "prose",
+       "runs": 5,
+       "ttft_p50": 53.28302597627044,
+       "decode_med": 78.46723539432118
+      },
+      {
+       "category": "reasoning",
+       "runs": 5,
+       "ttft_p50": 88.36793410591781,
+       "decode_med": 119.43407811096878
+      },
+      {
+       "category": "summarization",
+       "runs": 5,
+       "ttft_p50": 92.4040770623833,
+       "decode_med": 140.50132754618298
+      }
+     ],
+     "scored_requests_ok": {
+      "decode": "40/40",
+      "concurrency": "192/192",
+      "prefill": "40/40"
+     },
+     "c1_decode_forward_ms_median": 28.0,
+     "startup_s": 210.0,
+     "betterbench_rc": 0,
+     "post_benchmark_greedy_matches": 12,
+     "greedy_matches_vs_first_release_20260924_run": 12
+    },
+    {
+     "arm": "mxfp4_20260926",
+     "sequence_index": 4,
+     "benchmark_started": "2026-09-26T17:15:38+0000",
+     "metrics": {
+      "weighted_decode": 156.1554461754619,
+      "C1": 124.05960444393573,
+      "C2": 210.24004860884082,
+      "C4": 317.234819665891,
+      "C8": 427.7391004387233,
+      "prefill_2000": 3690.4410134446025,
+      "prefill_8000": 3828.988227657879,
+      "prefill_16000": 3869.516363524772,
+      "prefill_32000": 3749.906188040573,
+      "prefill_64000": 3455.31203764744,
+      "prefill_ttft_p50_ms_2000": 407.2605880210176,
+      "prefill_ttft_p50_ms_8000": 1549.325137923006,
+      "prefill_ttft_p50_ms_16000": 3056.046207435429,
+      "prefill_ttft_p50_ms_32000": 6274.656486057211,
+      "prefill_ttft_p50_ms_64000": 13621.246717055328
+     },
+     "decode_categories": [
+      {
+       "category": "chat",
+       "runs": 5,
+       "ttft_p50": 91.76428208593279,
+       "decode_med": 122.88539295814941
+      },
+      {
+       "category": "code",
+       "runs": 5,
+       "ttft_p50": 89.02116806712002,
+       "decode_med": 182.52720794577004
+      },
+      {
+       "category": "file_edit",
+       "runs": 5,
+       "ttft_p50": 91.62837499752641,
+       "decode_med": 182.5663859122055
+      },
+      {
+       "category": "json",
+       "runs": 5,
+       "ttft_p50": 89.21323099639267,
+       "decode_med": 220.7333340458553
+      },
+      {
+       "category": "math",
+       "runs": 5,
+       "ttft_p50": 88.52979098446667,
+       "decode_med": 186.39431485365256
+      },
+      {
+       "category": "prose",
+       "runs": 5,
+       "ttft_p50": 53.454575012438,
+       "decode_med": 80.69506206771847
+      },
+      {
+       "category": "reasoning",
+       "runs": 5,
+       "ttft_p50": 88.78733799792826,
+       "decode_med": 119.41284873774919
+      },
+      {
+       "category": "summarization",
+       "runs": 5,
+       "ttft_p50": 92.50032599084079,
+       "decode_med": 140.43816035924442
+      }
+     ],
+     "scored_requests_ok": {
+      "decode": "40/40",
+      "concurrency": "192/192",
+      "prefill": "40/40"
+     },
+     "c1_decode_forward_ms_median": 28.0,
+     "startup_s": 210.0,
+     "betterbench_rc": 0,
+     "post_benchmark_greedy_matches": 12,
+     "greedy_matches_vs_first_release_20260924_run": 12
+    }
+   ],
+   "w3a4_20260926": [
+    {
+     "arm": "w3a4_20260926",
+     "sequence_index": 2,
+     "benchmark_started": "2026-09-26T16:46:45+0000",
+     "metrics": {
+      "weighted_decode": 182.66018553679388,
+      "C1": 148.8329491835447,
+      "C2": 251.97852904738662,
+      "C4": 364.3465447010564,
+      "C8": 496.15804202915587,
+      "prefill_2000": 4158.159248626262,
+      "prefill_8000": 4165.409134430851,
+      "prefill_16000": 4104.0130686511175,
+      "prefill_32000": 3959.3202085899957,
+      "prefill_64000": 3629.456874090416,
+      "prefill_ttft_p50_ms_2000": 363.4598475182429,
+      "prefill_ttft_p50_ms_8000": 1417.529258003924,
+      "prefill_ttft_p50_ms_16000": 2876.08513754094,
+      "prefill_ttft_p50_ms_32000": 5939.549582544714,
+      "prefill_ttft_p50_ms_64000": 12957.653261022642
+     },
+     "decode_categories": [
+      {
+       "category": "chat",
+       "runs": 5,
+       "ttft_p50": 90.5072420137003,
+       "decode_med": 132.54738767726357
+      },
+      {
+       "category": "code",
+       "runs": 5,
+       "ttft_p50": 90.4954590369016,
+       "decode_med": 225.7763740899617
+      },
+      {
+       "category": "file_edit",
+       "runs": 5,
+       "ttft_p50": 90.8961760578677,
+       "decode_med": 179.02661677920355
+      },
+      {
+       "category": "json",
+       "runs": 5,
+       "ttft_p50": 91.49222599808127,
+       "decode_med": 268.762890719052
+      },
+      {
+       "category": "math",
+       "runs": 5,
+       "ttft_p50": 91.23055101372302,
+       "decode_med": 230.29544158580444
+      },
+      {
+       "category": "prose",
+       "runs": 5,
+       "ttft_p50": 48.683603992685676,
+       "decode_med": 94.70617039597106
+      },
+      {
+       "category": "reasoning",
+       "runs": 5,
+       "ttft_p50": 91.14227001555264,
+       "decode_med": 133.35030536557346
+      },
+      {
+       "category": "summarization",
+       "runs": 5,
+       "ttft_p50": 90.26613808237016,
+       "decode_med": 158.34191391516853
+      }
+     ],
+     "scored_requests_ok": {
+      "decode": "40/40",
+      "concurrency": "192/192",
+      "prefill": "40/40"
+     },
+     "c1_decode_forward_ms_median": 22.5,
+     "startup_s": 230.1,
+     "betterbench_rc": 0,
+     "post_benchmark_greedy_matches": 12,
+     "greedy_matches_vs_first_release_20260924_run": 5
+    },
+    {
+     "arm": "w3a4_20260926",
+     "sequence_index": 5,
+     "benchmark_started": "2026-09-26T17:31:04+0000",
+     "metrics": {
+      "weighted_decode": 186.15118683273062,
+      "C1": 148.75095878730346,
+      "C2": 246.66947461947981,
+      "C4": 372.27307406124964,
+      "C8": 488.1150582670347,
+      "prefill_2000": 4154.463294249574,
+      "prefill_8000": 4165.561394410441,
+      "prefill_16000": 4101.843805961362,
+      "prefill_32000": 3957.0098402024805,
+      "prefill_64000": 3629.272213827431,
+      "prefill_ttft_p50_ms_2000": 363.330292457249,
+      "prefill_ttft_p50_ms_8000": 1415.9658034914173,
+      "prefill_ttft_p50_ms_16000": 2877.9249060316943,
+      "prefill_ttft_p50_ms_32000": 5946.667865500785,
+      "prefill_ttft_p50_ms_64000": 12966.822442016564
+     },
+     "decode_categories": [
+      {
+       "category": "chat",
+       "runs": 5,
+       "ttft_p50": 94.19173607602715,
+       "decode_med": 139.0741564893032
+      },
+      {
+       "category": "code",
+       "runs": 5,
+       "ttft_p50": 94.87505396828055,
+       "decode_med": 226.32328130646798
+      },
+      {
+       "category": "file_edit",
+       "runs": 5,
+       "ttft_p50": 91.97351208422333,
+       "decode_med": 211.07125605664137
+      },
+      {
+       "category": "json",
+       "runs": 5,
+       "ttft_p50": 94.22912693116814,
+       "decode_med": 269.20598505731766
+      },
+      {
+       "category": "math",
+       "runs": 5,
+       "ttft_p50": 93.47831597551703,
+       "decode_med": 227.4676209086217
+      },
+      {
+       "category": "prose",
+       "runs": 5,
+       "ttft_p50": 48.24551602359861,
+       "decode_med": 94.76451432734223
+      },
+      {
+       "category": "reasoning",
+       "runs": 5,
+       "ttft_p50": 92.75023103691638,
+       "decode_med": 133.56631809526908
+      },
+      {
+       "category": "summarization",
+       "runs": 5,
+       "ttft_p50": 91.26237803138793,
+       "decode_med": 158.38238308373292
+      }
+     ],
+     "scored_requests_ok": {
+      "decode": "40/40",
+      "concurrency": "192/192",
+      "prefill": "40/40"
+     },
+     "c1_decode_forward_ms_median": 22.4,
+     "startup_s": 230.1,
+     "betterbench_rc": 0,
+     "post_benchmark_greedy_matches": 12,
+     "greedy_matches_vs_first_release_20260924_run": 5
+    }
+   ]
+  },
+  "means": {
+   "release_20260924_mxfp4": {
+    "metrics": {
+     "weighted_decode": 153.76505392745796,
+     "C1": 121.95180102497554,
+     "C2": 204.17076713557597,
+     "C4": 308.19421354350885,
+     "C8": 425.30539666405116,
+     "prefill_2000": 3689.2857535800053,
+     "prefill_8000": 3834.1839163472864,
+     "prefill_16000": 3870.556631339066,
+     "prefill_32000": 3751.4926034845203,
+     "prefill_64000": 3455.270219589308,
+     "prefill_ttft_p50_ms_2000": 407.4529690260533,
+     "prefill_ttft_p50_ms_8000": 1548.0468279856723,
+     "prefill_ttft_p50_ms_16000": 3054.5536267454736,
+     "prefill_ttft_p50_ms_32000": 6270.296923961723,
+     "prefill_ttft_p50_ms_64000": 13617.79778174241
+    },
+    "decode_categories": [
+     {
+      "category": "chat",
+      "ttft_p50": 91.32349450374022,
+      "decode_med": 121.2399969944126
+     },
+     {
+      "category": "code",
+      "ttft_p50": 88.81520200520754,
+      "decode_med": 179.93135084332295
+     },
+     {
+      "category": "file_edit",
+      "ttft_p50": 91.43928356934339,
+      "decode_med": 179.85131304803474
+     },
+     {
+      "category": "json",
+      "ttft_p50": 88.80910003790632,
+      "decode_med": 217.48777443906488
+     },
+     {
+      "category": "math",
+      "ttft_p50": 88.55938899796456,
+      "decode_med": 183.77628884636187
+     },
+     {
+      "category": "prose",
+      "ttft_p50": 53.388400992844254,
+      "decode_med": 78.49916554546496
+     },
+     {
+      "category": "reasoning",
+      "ttft_p50": 88.61074602464214,
+      "decode_med": 117.78750393309728
+     },
+     {
+      "category": "summarization",
+      "ttft_p50": 92.5153759890236,
+      "decode_med": 138.4497558535868
+     }
+    ]
+   },
+   "mxfp4_20260926": {
+    "metrics": {
+     "weighted_decode": 156.06750564400159,
+     "C1": 123.72957485300347,
+     "C2": 209.34379090052994,
+     "C4": 315.4630377350569,
+     "C8": 428.0200324266743,
+     "prefill_2000": 3690.665911755725,
+     "prefill_8000": 3831.454108729354,
+     "prefill_16000": 3870.504735477364,
+     "prefill_32000": 3750.2944385945348,
+     "prefill_64000": 3455.1953801835666,
+     "prefill_ttft_p50_ms_2000": 407.37404447281733,
+     "prefill_ttft_p50_ms_8000": 1549.0515569690615,
+     "prefill_ttft_p50_ms_16000": 3055.0510542234406,
+     "prefill_ttft_p50_ms_32000": 6273.08123052353,
+     "prefill_ttft_p50_ms_64000": 13621.61099203513
+    },
+    "decode_categories": [
+     {
+      "category": "chat",
+      "ttft_p50": 91.7160355602391,
+      "decode_med": 122.92767890891062
+     },
+     {
+      "category": "code",
+      "ttft_p50": 89.18672800064087,
+      "decode_med": 182.6943403956816
+     },
+     {
+      "category": "file_edit",
+      "ttft_p50": 91.59635897958651,
+      "decode_med": 182.6528595485787
+     },
+     {
+      "category": "json",
+      "ttft_p50": 89.20904545811936,
+      "decode_med": 220.8338545376206
+     },
+     {
+      "category": "math",
+      "ttft_p50": 88.73007050715387,
+      "decode_med": 186.54807807868724
+     },
+     {
+      "category": "prose",
+      "ttft_p50": 53.36880049435422,
+      "decode_med": 79.58114873101982
+     },
+     {
+      "category": "reasoning",
+      "ttft_p50": 88.57763605192304,
+      "decode_med": 119.42346342435899
+     },
+     {
+      "category": "summarization",
+      "ttft_p50": 92.45220152661204,
+      "decode_med": 140.4697439527137
+     }
+    ]
+   },
+   "w3a4_20260926": {
+    "metrics": {
+     "weighted_decode": 184.40568618476226,
+     "C1": 148.79195398542407,
+     "C2": 249.32400183343321,
+     "C4": 368.30980938115306,
+     "C8": 492.1365501480953,
+     "prefill_2000": 4156.311271437918,
+     "prefill_8000": 4165.485264420646,
+     "prefill_16000": 4102.92843730624,
+     "prefill_32000": 3958.165024396238,
+     "prefill_64000": 3629.3645439589236,
+     "prefill_ttft_p50_ms_2000": 363.39506998774596,
+     "prefill_ttft_p50_ms_8000": 1416.7475307476707,
+     "prefill_ttft_p50_ms_16000": 2877.0050217863172,
+     "prefill_ttft_p50_ms_32000": 5943.10872402275,
+     "prefill_ttft_p50_ms_64000": 12962.237851519603
+    },
+    "decode_categories": [
+     {
+      "category": "chat",
+      "ttft_p50": 92.34948904486373,
+      "decode_med": 135.81077208328338
+     },
+     {
+      "category": "code",
+      "ttft_p50": 92.68525650259107,
+      "decode_med": 226.04982769821484
+     },
+     {
+      "category": "file_edit",
+      "ttft_p50": 91.43484407104552,
+      "decode_med": 195.04893641792245
+     },
+     {
+      "category": "json",
+      "ttft_p50": 92.8606764646247,
+      "decode_med": 268.98443788818486
+     },
+     {
+      "category": "math",
+      "ttft_p50": 92.35443349462003,
+      "decode_med": 228.88153124721308
+     },
+     {
+      "category": "prose",
+      "ttft_p50": 48.46456000814214,
+      "decode_med": 94.73534236165665
+     },
+     {
+      "category": "reasoning",
+      "ttft_p50": 91.94625052623451,
+      "decode_med": 133.45831173042126
+     },
+     {
+      "category": "summarization",
+      "ttft_p50": 90.76425805687904,
+      "decode_med": 158.3621484994507
+     }
+    ]
+   }
+  },
+  "change_percent_vs_release_20260924_mxfp4": {
+   "mxfp4_20260926": {
+    "weighted_decode": 1.4973829603895927,
+    "C1": 1.457767587756953,
+    "C2": 2.53367503954125,
+    "C4": 2.3585206574690876,
+    "C8": 0.6382791716060376,
+    "prefill_2000": 0.03740990175078451,
+    "prefill_8000": -0.0711965747468013,
+    "prefill_16000": -0.001340785490167029,
+    "prefill_32000": -0.03193835138772805,
+    "prefill_64000": -0.002165949433330372,
+    "decode_chat": 1.3920174499639781,
+    "decode_code": 1.5355798416500255,
+    "decode_file_edit": 1.5577014440788295,
+    "decode_json": 1.5385141105911826,
+    "decode_math": 1.5082409432277677,
+    "decode_prose": 1.3783371810853318,
+    "decode_reasoning": 1.3889075127960337,
+    "decode_summarization": 1.4590044501509247
+   },
+   "w3a4_20260926": {
+    "weighted_decode": 19.9269154301859,
+    "C1": 22.008820480602598,
+    "C2": 22.115425891442154,
+    "C4": 19.505750982945536,
+    "C8": 15.713685743995875,
+    "prefill_2000": 12.658968403429327,
+    "prefill_8000": 8.640726561415967,
+    "prefill_16000": 6.003575922018811,
+    "prefill_32000": 5.509071795043741,
+    "prefill_64000": 5.0385154649441155,
+    "decode_chat": 12.018125577438177,
+    "decode_code": 25.631151346743366,
+    "decode_file_edit": 8.450104206817066,
+    "decode_json": 23.677957798748906,
+    "decode_math": 24.54355928286236,
+    "decode_prose": 20.683247654127037,
+    "decode_reasoning": 13.304304169842096,
+    "decode_summarization": 14.382396359674088
+   }
+  }
+ },
+ "long_context_capacity": {
+  "workload": "Four requests of 61,390 to 61,426 prompt tokens and 512 output tokens each, sent together; 65K release profile; wall time until the last request finishes",
+  "mxfp4_image": "MXFP4-only build of this round (same as mxfp4_20260926)",
+  "arms": {
+   "mxfp4_release_kv": {
+    "kv_cache_memory_bytes": 6535819798,
+    "kv_cache_tokens": 174634,
+    "four_requests_wall_s": 105.64,
+    "four_requests_max_decoding_together": 2,
+    "four_requests_all_decoding_tok_s": null,
+    "two_requests_all_decoding_tok_s": 69.37,
+    "peak_vram_gib": 31.37,
+    "preemptions": 0.0
+   },
+   "w3a4_same_kv": {
+    "kv_cache_memory_bytes": 6535819798,
+    "kv_cache_tokens": 174634,
+    "four_requests_wall_s": 92.92,
+    "four_requests_max_decoding_together": 2,
+    "four_requests_all_decoding_tok_s": null,
+    "two_requests_all_decoding_tok_s": 117.49,
+    "peak_vram_gib": 28.73,
+    "preemptions": 0.0
+   },
+   "w3a4_launcher_default_kv": {
+    "kv_cache_memory_bytes": 9381235631,
+    "kv_cache_tokens": 250578,
+    "four_requests_wall_s": 86.22,
+    "four_requests_max_decoding_together": 4,
+    "four_requests_all_decoding_tok_s": 199.23,
+    "two_requests_all_decoding_tok_s": null,
+    "peak_vram_gib": 31.39,
+    "preemptions": 0.0
+   }
+  },
+  "weights_calibration": {
+   "w3a4_same_kv": "earlier calibration of the same 3-bit format",
+   "w3a4_launcher_default_kv": "published weights"
+  }
+ },
+ "memory": {
+  "model_weights_gib": {
+   "mxfp4": 19.18,
+   "w3a4": 15.89
+  },
+  "kv_cache_memory_bytes_release_profile": {
+   "mxfp4": 6535819798,
+   "w3a4": 9381235631
+  },
+  "kv_cache_tokens_release_profile": {
+   "mxfp4": 174634,
+   "w3a4": 250578
+  },
+  "concurrent_65k_requests": {
+   "mxfp4": 2.66,
+   "w3a4": 3.82
+  }
+ },
+ "accuracy": {
+  "setting": "Served model, greedy decoding, thinking off; W3A4 (published weights) paired against MXFP4 on identical items; delta in points with a normal-approximation 95% interval",
+  "benchmarks": [
+   {
+    "name": "GSM8K 5-shot",
+    "items": 1319,
+    "mxfp4": 95.68,
+    "w3a4": 95.3,
+    "delta_points": -0.38,
+    "ci95": [
+     -1.44,
+     0.68
+    ]
+   },
+   {
+    "name": "HumanEval pass@1",
+    "items": 164,
+    "mxfp4": 95.12,
+    "w3a4": 93.9,
+    "delta_points": -1.22,
+    "ci95": [
+     -4.99,
+     2.56
+    ]
+   },
+   {
+    "name": "MMLU-Pro subset, 0-shot (14 categories x 100)",
+    "items": 1400,
+    "mxfp4": 62.57,
+    "w3a4": 59.71,
+    "delta_points": -2.86,
+    "ci95": [
+     -4.81,
+     -0.9
+    ]
+   },
+   {
+    "name": "Needle retrieval at 61,440 tokens",
+    "items": 80,
+    "mxfp4": 100.0,
+    "w3a4": 100.0,
+    "delta_points": 0.0
+   }
+  ],
+  "dflash2_mean_acceptance_change_percent": {
+   "chat_prompts_38": 0.1,
+   "gsm8k": -0.4,
+   "humaneval": 2.8,
+   "mmlu_pro": 1.8,
+   "needle": 2.0
+  }
+ },
+ "notes": [
+  "Each arm ran twice in fresh processes, interleaved; tables report the mean of the two runs. Per-category decode is the median of five scored requests; prefill is the median of eight scored requests per depth.",
+  "Weighted decode uses the BetterBench category weights listed in profile.weighted_decode_weights; chat and math are reported but carry no weight.",
+  "All arms ran with GPU_MAX_HW_QUEUES=1 and the same allocator setting, so every process was in the same decode timing mode (C1 decode forward-time median recorded per run). The gains therefore exclude the effect of the queue setting, which the 26 September image sets by default.",
+  "The BetterBench W3A4 runs used an earlier calibration of the same 3-bit format; tensor layout and runtime are identical, so the timing applies to the published weights. Accuracy and the four-request run at the launcher's default KV budget used the published weights.",
+  "The W3A4 arm ran the release image itself (local image ID identical to the release tag); its registry digest is added when the image is published.",
+  "W3A4 changes greedy outputs (5 of 12 greedy prompts identical to MXFP4) because its weights are lossy; each W3A4 run reproduced its own 12 greedy outputs after the benchmark and across both processes. The MXFP4 arm of this round matched all 12 greedy outputs of the 24 September release.",
+  "Sampled output content and accepted-token work can differ; these are serving-throughput measurements, not identical-output timing.",
+  "Nominal prefill depths correspond to median actual prompt lengths 1516.5, 5894.5, 11802, 23549.5, 47016.5."
+ ]
+}

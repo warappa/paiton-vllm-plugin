@@ -359,6 +359,54 @@ class Rocm10LauncherTests(unittest.TestCase):
         self.assertIn('PAITON_NGRAM_CODRAFT_HOT_MATCH=32', command[:image_index])
         self.assertEqual(command[command.index('PAITON_NGRAM_CODRAFT=1') - 1], '-e')
 
+    def test_w3a4_weights_follow_the_mounted_directory(self):
+        w3rot = self.root / 'w3rot directory'
+        w3rot.mkdir()
+        flags = [name + '=0' for name in launcher.W3_FLAGS]
+        # Without the 3-bit weights the image serves MXFP4 and says how to enable them.
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('PAITON_W3ROT_DIR', result.stderr)
+        command = ['docker', *json.loads(self.record.read_text())]
+        image_index = command.index(launcher.IMAGES['65k'])
+        for flag in flags:
+            self.assertIn(flag, command[:image_index])
+        self.assertFalse(any(item.endswith(':/models/w3rot:ro') for item in command))
+        self.environment['PAITON_W3ROT_DIR'] = str(w3rot)
+        command = self.command()
+        image_index = command.index(launcher.IMAGES['65k'])
+        self.assertIn(f'{w3rot}:/models/w3rot:ro', command[:image_index])
+        self.assertFalse(any(flag in command for flag in flags))
+        # The memory the 3-bit weights free goes to the KV cache unless a budget is given,
+        # with the allocator setting that budget was measured with.
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV_CACHE_BYTES))
+        self.assertIn('PYTORCH_ALLOC_CONF=max_split_size_mb:64', command[:image_index])
+        command = self.command('--kv-cache-memory-bytes', '7000000000')
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), '7000000000')
+        command = self.command('--profile', 'desktop')
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(2 * 1024**3))
+        command = self.command('--weights', 'mxfp4')
+        self.assertFalse(any(item.endswith(':/models/w3rot:ro') for item in command))
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), '6535819798')
+        for flag in flags:
+            self.assertIn(flag, command)
+
+    def test_w3a4_weights_require_their_directory_and_the_65k_image(self):
+        result = self.run_launcher('--weights', 'w3a4')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('PAITON_W3ROT_DIR', result.stderr)
+        self.environment['PAITON_W3ROT_DIR'] = str(self.root / 'missing')
+        result = self.run_launcher('--weights', 'w3a4')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('not an existing directory', result.stderr)
+        result = self.run_launcher('--release', '200k', '--weights', 'w3a4')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('not available for the 200k release', result.stderr)
+        self.assertFalse(self.record.exists())
+        command = self.command('--release', '200k')
+        self.assertFalse(any(item.startswith('PAITON_W3_') for item in command))
+        self.assertFalse(any(item.endswith(':/models/w3rot:ro') for item in command))
+
 
 if __name__ == '__main__':
     unittest.main()

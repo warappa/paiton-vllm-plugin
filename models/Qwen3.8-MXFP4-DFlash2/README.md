@@ -38,13 +38,13 @@ for exactly what was tested.
 
 ## Current release
 
-**24 September 2026: faster prefill at every depth, decode and concurrency unchanged, and an opt-in n-gram co-drafting mode for agentic coding.**
-The updated 65K image prefills **3,871 input tok/s at 16K** (3,687 at 2K, 3,829 at 8K, 3,753 at 32K, 3,457 at 64K), **+3.5% to +5.4%** over a fresh run of the 20 September image, with weighted decode at **154.8 tok/s** (+0.7%) and **422.9 tok/s aggregate at concurrency eight**. In a 35-turn agentic coding session on the 200K chat profile, session time to first token is **10–11% lower**. All twelve greedy control prompts match before and after timing. The optional `PAITON_NGRAM_CODRAFT=1` mode adds **+27% decode** on that coding session; see [n-gram co-drafting](#faster-agentic-coding-decode-n-gram-co-drafting-opt-in).
+**26 September 2026: optional 3-bit W3A4 weights, +19.9% weighted decode.**
+The updated 65K image can serve our own rotated 3-bit weights, [EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4](https://huggingface.co/EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4), alongside the same target checkpoint and DFlash2 drafter. Against the 24 September release, weighted decode rises from **153.8 to 184.4 tok/s (+19.9%)**, aggregate throughput at concurrency eight from 425.3 to **492.1 tok/s (+15.7%)**, and prefill by **+5.0% to +12.7%** (up to 4,165 input tok/s). Most of the memory the smaller weights free goes to the KV cache: **250,578 tokens**, room for 3.8 concurrent 65K-token requests instead of 2.7. The trade-off is knowledge recall: MMLU-Pro scores about 3 points lower, while GSM8K, HumanEval and a 61K-token needle test stay within noise. Without the 3-bit weights, the image serves MXFP4 as before, with this round's other improvements (+1.5% weighted decode). See [3-bit W3A4 weights](#faster-decode-and-prefill-3-bit-w3a4-weights-optional).
 
 | Image default | Total context limit | Maximum scheduled requests | Image |
 | --- | ---: | ---: | --- |
-| Updated 65K | 65,536 tokens | 8 | `ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260924-r3` |
-| Existing 200K | 200,000 tokens | 1 | [18 September 200K package](https://github.com/users/Eliovp/packages/container/paiton-vllm-plugin/1266757900) |
+| Updated 65K · MXFP4 or 3-bit W3A4 weights | 65,536 tokens | 8 | `ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1` |
+| Existing 200K · MXFP4 weights | 200,000 tokens | 1 | [18 September 200K package](https://github.com/users/Eliovp/packages/container/paiton-vllm-plugin/1266757900) |
 
 Both image defaults use FP8 KV caching and disable automatic prefix caching (APC).
 APC remains an optional launcher setting. The existing 200K `chat` profile below
@@ -70,20 +70,25 @@ The main setup below uses the **updated 65K image with APC off**, matching the
 benchmark configuration. The optional long-context profile remains available below.
 
 This release loads the **Unsloth NVFP4 checkpoint through the MXFP4 runtime path**.
-The AMD checkpoint and automatic downloader in the historical release below
-are for the older images.
+The 65K image can also serve optional 3-bit W3A4 weights on top of this
+checkpoint; see [Optional: 3-bit W3A4 weights](#optional-3-bit-w3a4-weights).
+The AMD checkpoint and automatic downloader in the historical release below are
+for the older images.
 
 ## Model weights and existing downloads
 
-Choose **one** of the following paths. The current container needs both:
+Choose **one** of the following paths. The current container needs the target and
+the draft; the 3-bit weights are optional:
 
 | Component | Repository | Required revision |
 | --- | --- | --- |
 | Target | `unsloth/Qwen3.8-27B-NVFP4` | `f0b7c9e722f5565102fff8481c99e4d86ae099c7` |
 | DFlash2 draft | `tcclaviger/Qwen3.8-27B-DFlash2-FP8` | `ee0cb26a8279b7910cc28d82a8a3e15e4728d56f` |
+| 3-bit W3A4 weights (optional, 65K image) | `EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4` | `278486debe64e21e5e9d45ac8d02798d72fbdf83` |
 
-The native `paiton serve qwen38-nvfp4` preset above is non-speculative. The
-instructions here preserve the Docker release's **DFlash2** profile.
+The native `paiton serve qwen38-nvfp4` preset above is non-speculative and does
+not use the 3-bit weights. The instructions here preserve the Docker release's
+**DFlash2** profile.
 
 ### First download
 
@@ -95,7 +100,7 @@ if `hf` is not available.
 ```bash
 export PAITON_TARGET_DIR="$PWD/model-cache/qwen38-nvfp4"
 export PAITON_DRAFT_DIR="$PWD/model-cache/qwen38-dflash2"
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260924"
+export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260926"
 mkdir -p "$PAITON_TARGET_DIR" "$PAITON_DRAFT_DIR" "$PAITON_CACHE_DIR"
 
 hf download unsloth/Qwen3.8-27B-NVFP4 \
@@ -109,6 +114,25 @@ hf download tcclaviger/Qwen3.8-27B-DFlash2-FP8 \
 After both downloads complete, use [Launch with prepared local folders](#launch-with-prepared-local-folders).
 If either download fails, resolve that failure before starting the server.
 
+### Optional: 3-bit W3A4 weights
+
+For the faster 3-bit mode of the 65K image, also download our rotated 3-bit weights
+(9.55 GB). They add to the target and draft above; they do not replace them.
+
+```bash
+export PAITON_W3ROT_DIR="$PWD/model-cache/qwen38-w3rot-int3"
+mkdir -p "$PAITON_W3ROT_DIR"
+
+hf download EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4 \
+  --revision 278486debe64e21e5e9d45ac8d02798d72fbdf83 \
+  --local-dir "$PAITON_W3ROT_DIR"
+(cd "$PAITON_W3ROT_DIR" && sha256sum -c SHA256SUMS)
+```
+
+When `PAITON_W3ROT_DIR` is set, the 65K launcher serves these weights. For an
+existing copy of the same revision, point `PAITON_W3ROT_DIR` at that folder
+instead. See [what the 3-bit weights change](#faster-decode-and-prefill-3-bit-w3a4-weights-optional).
+
 ### Already in a local folder
 
 Point to your complete **standalone** target and draft directories. These can
@@ -118,13 +142,14 @@ the same pinned files. Do not point to the parent directory holding both models.
 ```bash
 export PAITON_TARGET_DIR="/absolute/path/to/qwen38-nvfp4"
 export PAITON_DRAFT_DIR="/absolute/path/to/qwen38-dflash2"
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260924"
+export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260926"
 mkdir -p "$PAITON_CACHE_DIR"
 ```
 
 Each model directory must contain its own `config.json` and complete weight
 files; keep the target tokenizer too. The launcher mounts these directories
-read-only as `/models/target` and `/models/draft`. It uses `/cache` for the
+read-only as `/models/target` and `/models/draft`, and the optional 3-bit
+weights from `PAITON_W3ROT_DIR` as `/models/w3rot`. It uses `/cache` for the
 separate writable runtime cache. Then [launch below](#launch-with-prepared-local-folders).
 
 ### Already in the Hugging Face cache
@@ -133,14 +158,17 @@ If you previously ran `hf download` without `--local-dir`, select the Hub cache
 that contains both pinned snapshots. The following **65K Docker command** mounts
 the entire cache read-only and selects the snapshots inside it, preserving their
 links to `blobs/`. It uses the same image and inference settings as the default
-65K launcher; only the weight paths differ.
+65K launcher with MXFP4 weights; only the weight paths differ. The three
+`PAITON_W3_*=0` variables switch off the image's 3-bit path, as the launcher does
+without `PAITON_W3ROT_DIR`. For the 3-bit weights, download them to a standalone
+folder as [shown above](#optional-3-bit-w3a4-weights) and use the launcher.
 
 For a cache on another drive, replace the first export with
 `export HF_HUB_CACHE="/absolute/path/to/your/hub-cache"`.
 
 ```bash
 export HF_HUB_CACHE="${HF_HUB_CACHE:-${HUGGINGFACE_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub}}"
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260924"
+export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260926"
 mkdir -p "$PAITON_CACHE_DIR"
 
 docker run --rm --name paiton-qwen38-65k-cached --network host \
@@ -148,7 +176,8 @@ docker run --rm --name paiton-qwen38-65k-cached --network host \
   --mount "type=bind,src=$HF_HUB_CACHE,dst=/hf-hub,readonly" \
   --mount "type=bind,src=$PAITON_CACHE_DIR,dst=/cache" \
   -e HF_HUB_OFFLINE=1 \
-  ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260924-r3@sha256:c2511888b76abf463c7f5c51f0c70bf66c593f3c2fca8d910765d85318d399ce \
+  -e PAITON_W3_DECODE=0 -e PAITON_W3_PREFILL=0 -e PAITON_W3_A4=0 \
+  ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1@sha256:c4134aba665f6dd3b89354a43be2b5b814f7078db456351647a3f1b106a0da49 \
   serve /hf-hub/models--unsloth--Qwen3.8-27B-NVFP4/snapshots/f0b7c9e722f5565102fff8481c99e4d86ae099c7 \
   --tokenizer /hf-hub/models--unsloth--Qwen3.8-27B-NVFP4/snapshots/f0b7c9e722f5565102fff8481c99e4d86ae099c7 \
   --served-model-name Qwen3.8 \
@@ -194,6 +223,11 @@ After completing **First download** or **Already in a local folder**, run:
 ```bash
 bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-65k.sh
 ```
+
+With `PAITON_W3ROT_DIR` set, the launcher serves the 3-bit W3A4 weights; without
+it, it serves MXFP4 and says how to enable them. `--weights mxfp4` serves MXFP4
+even when the variable is set, and `--weights w3a4` stops with an error when it
+is missing.
 
 The current launcher checks that directories exist, but does not check that
 checkpoint files are present. An error about `/models/target` and `config.json`
@@ -301,6 +335,13 @@ this runtime; startup reports the required and available cache sizes.
 Use `--dry-run` to inspect the complete Docker command, or `--help` for all options.
 Customized settings are separate from the benchmark configuration below.
 
+With the 3-bit weights, the unchanged 65K preset gives most of the memory they
+free to the KV cache: 9,381,235,631 instead of 6,535,819,798 bytes, or 250,578 instead
+of 174,634 tokens. In our tests, peak VRAM stayed within 0.3 GiB of the MXFP4
+preset (31.39 vs 31.37 GiB with four 61K-token requests). An explicit
+`--kv-cache-memory-bytes` or `--gpu-memory-utilization`, and the `desktop` and
+`chat` profiles, keep their own budgets.
+
 ### 200K and 220K with prefix caching
 
 With your GPU visibility configured as above, use the chat profile for 200K,
@@ -365,9 +406,67 @@ limit used the checkpoint's vision weights and passed color identification and
 subsequent text and tool requests. That configuration needs additional VRAM and
 is not included in these launchers; 200K/220K multimodal use has not been validated.
 
+## Faster decode and prefill: 3-bit W3A4 weights (optional)
+
+The 26 September 65K image can serve our own rotated 3-bit weights for the
+decoder projections in place of MXFP4:
+[EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4](https://huggingface.co/EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4).
+They are an add-on to the same pinned target and DFlash2 drafter, not a
+standalone checkpoint. [Download them](#optional-3-bit-w3a4-weights), keep
+`PAITON_W3ROT_DIR` set, and start the 65K launcher as usual.
+
+**How they work.** The decoder projections use 3-bit integer weights with one
+scale per 128 weights, stored in a block-wise Hadamard-rotated basis and
+calibrated with GPTQ on permissively licensed data. During prefill, the rotated
+layers also take 4-bit activations using RDNA4 int4 matrix math; decode keeps
+8-bit activations. Model memory falls from 19.18 to 15.89 GiB, and the launcher
+gives most of the difference to the KV cache.
+
+**What you gain.** +19.9% weighted decode, +15.7% to +22.1% aggregate throughput
+at one to eight concurrent requests, and +5.0% to +12.7% prefill with
+correspondingly shorter time to first token (see
+[Current benchmark results](#current-benchmark-results)). The larger KV cache
+holds 3.8 instead of 2.7 concurrent 65K-token requests. Four 61K-token requests
+with 512 output tokens each:
+
+| Configuration | KV cache | Wall time | Requests decoding together |
+|---|---:|---:|---:|
+| MXFP4 | 174,634 tokens | 105.6 s | 2 |
+| W3A4, same KV budget | 174,634 tokens | 92.9 s | 2 |
+| W3A4, launcher default | 250,578 tokens | **86.2 s** | **4**, at 199 tok/s combined |
+
+At the same KV budget, two 61K-token requests decode at 117 instead of 69 tok/s
+combined. Startup takes about 230 s instead of about 210 s.
+
+**What it costs.** Served model, greedy decoding, thinking off, paired with
+MXFP4 on identical items; Δ in points with a 95% interval:
+
+| Benchmark | MXFP4 | W3A4 | Δ [95% CI] |
+|---|---:|---:|---:|
+| GSM8K 5-shot (1,319) | 95.68 | 95.30 | −0.38 [−1.44, +0.68] |
+| HumanEval pass@1 (164) | 95.12 | 93.90 | −1.22 [−4.99, +2.56] |
+| MMLU-Pro subset, 0-shot (14 × 100) | 62.57 | 59.71 | −2.86 [−4.81, −0.90] |
+| Needle at 61,440 tokens (80) | 100 | 100 | 0 |
+
+Math, code and long-context retrieval stay within noise; knowledge recall drops
+by about 3 points. DFlash2 acceptance changes by −0.4% to +2.8%. Outputs differ
+from the MXFP4 path, greedy ones included. **For maximum knowledge accuracy, use
+MXFP4** (`--weights mxfp4`, or leave `PAITON_W3ROT_DIR` unset); it keeps this
+release's other improvements.
+
+The 3-bit weights are text-only, tied to the pinned target revision, and served
+only by the 65K image; the 200K image uses MXFP4. They were benchmarked and
+evaluated with the 65K release profile. The launcher's `desktop` and `chat`
+profiles also use them when `PAITON_W3ROT_DIR` is set, but those combinations
+have not been measured. Transformers, stock vLLM and llama.cpp cannot load them.
+The weights are Apache-2.0; the
+[model card](https://huggingface.co/EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4)
+lists the calibration data and its attributions.
+
 ## Faster agentic coding decode: n-gram co-drafting (opt-in)
 
-The 24 September image includes an optional second drafter in front of DFlash2.
+The 24 September image introduced an optional second drafter in front of DFlash2;
+the 26 September image keeps it.
 When the last few generated tokens already occurred earlier in the prompt or the
 output, the matcher proposes the tokens that followed last time, so copy-heavy
 generations such as file rewrites, code echoed back into an edit, or repeated
@@ -382,7 +481,8 @@ launcher forwards the variable when it is set on the host:
 PAITON_NGRAM_CODRAFT=1 bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-65k.sh --profile chat
 ```
 
-Measured with the published adapter, A/B/A/B in fresh processes:
+Measured with the published adapter on the 24 September image (MXFP4 weights),
+A/B/A/B in fresh processes:
 
 | Workload | Off | `PAITON_NGRAM_CODRAFT=1` | Change |
 |---|---:|---:|---:|
@@ -416,57 +516,52 @@ the small cost on non-copying traffic.
 
 ## Current benchmark results
 
-R9700, 300 W; vLLM 0.29 / ROCm 10; 65,536 context; maximum eight sequences; APC off; thinking off; n-gram co-drafting off. Temperature 0.7, top-p 0.95, top-k 20, seed 42. BetterBench 0.6.0 quick. Control: a fresh pull of the 20 September image. Candidate: the 24 September image contents. Each arm ran twice in fresh processes, interleaved (control, candidate, control, candidate); the tables show the mean of the two runs, which agree within 0.2 tok/s except where noted.
+R9700, 300 W; vLLM 0.29 / ROCm 10; 65,536 context; maximum eight sequences; APC off; thinking off; n-gram co-drafting off. Temperature 0.7, top-p 0.95, top-k 20, seed 42. BetterBench 0.6.0 quick. Three arms, each run twice in fresh processes, interleaved: the published 24 September image; this round's runtime with MXFP4 weights; and the 26 September image with the 3-bit W3A4 weights. The tables show the mean of the two runs; changes compare W3A4 with the 24 September release. All arms set `GPU_MAX_HW_QUEUES=1`, so the gains exclude that setting.
 
-**Prefill, input tok/s.** The headline of this release: faster at every depth.
+**Decode, single stream, tok/s.** The headline of this release.
 
-| Nominal prefill depth | 20 September image (fresh run) | 24 September package | Change |
-|---:|---:|---:|---:|
-| 2,000 | 3,499 | **3,687** | +5.4% |
-| 8,000 | 3,699 | **3,829** | +3.5% |
-| 16,000 | 3,704 | **3,871** | +4.5% |
-| 32,000 | 3,591 | **3,753** | +4.5% |
-| 64,000 | 3,291 | **3,457** | +5.0% |
+| Category | 24 Sept release | 26 Sept, MXFP4 | 26 Sept, W3A4 | Change |
+|---|---:|---:|---:|---:|
+| chat | 121.2 | 122.9 | **135.8** | +12.0% |
+| code | 179.9 | 182.7 | **226.0** | +25.6% |
+| file edit | 179.9 | 182.7 | **195.0** | +8.5% |
+| json | 217.5 | 220.8 | **269.0** | +23.7% |
+| math | 183.8 | 186.5 | **228.9** | +24.5% |
+| prose | 78.5 | 79.6 | **94.7** | +20.7% |
+| reasoning | 117.8 | 119.4 | **133.5** | +13.3% |
+| summarization | 138.4 | 140.5 | **158.4** | +14.4% |
 
-**Decode, single stream.**
-
-| Category | Update p50 ms, 20 Sept | Update p50 ms, 24 Sept | TTFT p50 ms, 20 Sept | TTFT p50 ms, 24 Sept | tok/s, 20 Sept | tok/s, 24 Sept | Change |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| chat | 33.3 | 33.1 | 91.9 | 91.7 | 121.3 | **121.9** | +0.5% |
-| code | 33.5 | 33.3 | 89.5 | 88.9 | 180.0 | **181.1** | +0.6% |
-| file edit | 33.4 | 33.3 | 92.0 | 91.6 | 180.1 | **181.0** | +0.5% |
-| json | 33.5 | 33.3 | 89.7 | 89.0 | 217.6 | **218.8** | +0.5% |
-| math | 33.5 | 33.4 | 89.3 | 88.7 | 183.9 | **184.8** | +0.5% |
-| prose | 33.4 | 33.3 | 53.4 | 53.4 | 77.0 | **79.4** | +3.2% |
-| reasoning | 33.5 | 33.3 | 89.4 | 89.0 | 117.9 | **118.5** | +0.5% |
-| summarization | 33.4 | 33.2 | 92.6 | 92.4 | 138.6 | **139.3** | +0.6% |
-
-Weighted decode: **153.64 → 154.78 tok/s (+0.7%)**.
+Weighted decode: **153.8 → 156.1 → 184.4 tok/s (+19.9%)**.
 
 **Concurrency, aggregate generated tok/s over each complete 48-request workload.**
 
-| Concurrent requests | 20 September image (fresh run) | 24 September package | Change |
-|---:|---:|---:|---:|
-| 1 | 122.1 | **122.8** | +0.6% |
-| 2 | 205.7 | **207.0** | +0.7% |
-| 4 | 311.0 | **307.1** | −1.2% |
-| 8 | 421.6 | **422.9** | +0.3% |
+| Concurrent requests | 24 Sept release | 26 Sept, MXFP4 | 26 Sept, W3A4 | Change |
+|---:|---:|---:|---:|---:|
+| 1 | 122.0 | 123.7 | **148.8** | +22.0% |
+| 2 | 204.2 | 209.3 | **249.3** | +22.1% |
+| 4 | 308.2 | 315.5 | **368.3** | +19.5% |
+| 8 | 425.3 | 428.0 | **492.1** | +15.7% |
 
-The control's own two runs at concurrency four read 313.9 and 308.1 tok/s; the candidate's −1.2% sits inside that spread.
+**Prefill, input tok/s.** Time to first token shortens by the same factors.
 
-**Real use, 200K chat profile with prefix caching.** A 35-turn agentic coding session growing from 32.7K to 197.2K tokens plus a 123.6K-token cache miss, A/B/A/B in fresh processes: session time to first token 211.6 → 190.8 s and 211.7 → 188.5 s (−9.8% / −11.0%); per-request TTFT ratio 0.897; peak VRAM equal at 31.77 GiB. (This session run had n-gram co-drafting on; it does not affect TTFT.)
+| Nominal prefill depth | 24 Sept release | 26 Sept, MXFP4 | 26 Sept, W3A4 | Change |
+|---:|---:|---:|---:|---:|
+| 2,000 | 3,689 | 3,691 | **4,156** | +12.7% |
+| 8,000 | 3,834 | 3,831 | **4,165** | +8.6% |
+| 16,000 | 3,871 | 3,871 | **4,103** | +6.0% |
+| 32,000 | 3,751 | 3,750 | **3,958** | +5.5% |
+| 64,000 | 3,455 | 3,455 | **3,629** | +5.0% |
 
-**What changed in the image.** Three exact changes to the prefill path, each bitwise-equal to the previous kernel standalone and showing zero differing elements in in-model shadow audits: long-prefill attention with 16-key tiles (attention 6.6% faster in serving), the GDN gate read in place instead of copied, and a GDN chunk-scan kernel that fills the GPU in one round (together the GDN core is about 30% faster). The prefill GEMM, two thirds to three quarters of prefill time, runs at the card's 300 W limit, which is why the gains are 3.5–5.4% rather than more.
+**What changed in the image.** The optional [3-bit W3A4 weights](#faster-decode-and-prefill-3-bit-w3a4-weights-optional); a fused Gated DeltaNet speculative-verify kernel, exact against the previous path (the MXFP4 arm returns the same twelve greedy outputs as the 24 September release) and worth +1.5% weighted decode; and `GPU_MAX_HW_QUEUES=1`, which removes a slower decode mode that some fresh server processes on the R9700 started in.
 
-Update p50 is the median streamed-update gap, not per-token latency or TTFT.
 Sampled output content and accepted-token work can differ; these are serving-throughput measurements, not identical-output timing.
 Nominal prefill depths correspond to median actual prompt lengths 1516.5, 5894.5, 11802, 23549.5 and 47016.5.
 
-Every run: 40/40 decode, 192/192 concurrency and 40/40 prefill scored requests (plus the fixed warmups). All twelve greedy control prompts match the control before timing, and each arm repeats its twelve greedy outputs after the benchmark. No unhandled serving errors. Every run was in the same decode timing mode (C1 forward-time median 28.3–28.5 ms), so the arms are comparable.
+Every run: 40/40 decode, 192/192 concurrency and 40/40 prefill scored requests (plus the fixed warmups), and no serving errors. Each run repeats its twelve greedy outputs after the benchmark. Median C1 decode forward time: 28.3–28.4 ms (24 Sept), 28.0 ms (MXFP4), 22.4–22.5 ms (W3A4). The W3A4 timing runs used an earlier calibration of the same 3-bit format; the tensor layout and runtime are identical, so the timing applies to the published weights.
 
-Decode has five scored requests per category after one warmup. Prefill has eight scored requests per depth after two warmups. Category values are means of two complete runs, not selected across repeats.
+Decode has five scored requests per category after one warmup. Prefill has eight scored requests per depth after two warmups. Category values are means of two complete runs, not selected across repeats; the two W3A4 runs differ most on file edit (179.0 and 211.1 tok/s) and chat (132.5 and 139.1 tok/s).
 
-[Machine-readable results](benchmarks/2026-09-24-prefill-ngram/numbers.json) · [Benchmark page](benchmarks/2026-09-24-prefill-ngram/README.md).
+[Machine-readable results](benchmarks/2026-09-26-w3a4/numbers.json) · [Benchmark page](benchmarks/2026-09-26-w3a4/README.md).
 
 ## Historical releases and comparisons
 
@@ -477,6 +572,15 @@ legacy release; use the `run-rocm10-*.sh` launchers above for the current images
 
 <details>
 <summary>Earlier releases, APC investigation, benchmarks and reproduction instructions</summary>
+
+## 24 September 2026 release: faster prefill and opt-in n-gram co-drafting
+
+The 24 September 65K image (`ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260924-r3`)
+prefilled 3,457–3,871 input tok/s from 2K to 64K (+3.5–5.4% over the 20 September image) and
+measured 154.78 tok/s weighted decode and 422.9 tok/s aggregate at concurrency eight. On the 200K
+chat profile, a 35-turn agentic coding session had 10–11% lower session time to first token. Its
+full tables are in [benchmarks/2026-09-24-prefill-ngram](benchmarks/2026-09-24-prefill-ngram/README.md);
+its opt-in n-gram co-drafting mode is described [above](#faster-agentic-coding-decode-n-gram-co-drafting-opt-in).
 
 ## 20 September 2026 release: ROCm 10 and vLLM 0.29 combined runtime
 

@@ -11,9 +11,16 @@ import sys
 
 
 IMAGES = {
-    '65k': 'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260924-r3@sha256:c2511888b76abf463c7f5c51f0c70bf66c593f3c2fca8d910765d85318d399ce',
+    '65k': 'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1@sha256:c4134aba665f6dd3b89354a43be2b5b814f7078db456351647a3f1b106a0da49',
     '200k': 'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-200k-20260918-r2@sha256:32dab97330ea84b86967537d25f91878c30f21ff844f71369508c5a049b89178',
 }
+# Images that carry the native 3-bit (W3A4) runtime. Its flags default on inside
+# the image and read the rotated weights from /models/w3rot.
+W3_RELEASES = frozenset(('65k',))
+W3_FLAGS = ('PAITON_W3_DECODE', 'PAITON_W3_PREFILL', 'PAITON_W3_A4')
+# Release KV budget plus 2.65 GiB of the 3.29 GiB the 3-bit weights free: four
+# 61K-token requests fit and peak at the MXFP4 release VRAM (31.39 vs 31.37 GiB).
+W3_KV_CACHE_BYTES = 9381235631
 SYS_DRM = Path('/sys/class/drm')
 SYS_KFD = Path('/sys/class/kfd/kfd/topology/nodes')
 
@@ -92,6 +99,8 @@ def parser():
         'chat_template_kwargs.enable_thinking=false to match the reported benchmarks.'))
     result.add_argument('--release', choices=IMAGES, default='65k', help=argparse.SUPPRESS)
     result.add_argument('--image', help='compatible runtime image override; preserves the selected release settings')
+    result.add_argument('--weights', choices=('auto', 'w3a4', 'mxfp4'), default='auto',
+                        help='auto: the 3-bit W3A4 weights when PAITON_W3ROT_DIR is set, MXFP4 otherwise')
     result.add_argument('--profile', choices=('release', 'desktop', 'chat'), default='release',
                         help='chat: 200000 context, APC on, thinking off, 8 GiB KV; '
                              'desktop: 32768 context, 2 GiB KV; both use one request and 1024 prefill chunks')
@@ -178,7 +187,7 @@ def prefix_caching_enabled(args):
     return args.prefix_caching == 'on' or (args.prefix_caching is None and args.profile == 'chat')
 
 
-def engine_command(args):
+def engine_command(args, weights='mxfp4'):
     if args.context is not None and args.context > 262144:
         raise ValueError('--context exceeds this checkpoint\'s 262144-token model limit')
     if args.max_num_seqs is not None and args.max_num_seqs > 8:
@@ -204,6 +213,8 @@ def engine_command(args):
             cache = 8 * 1024**3
         elif desktop:
             cache = 2 * 1024**3
+        elif weights == 'w3a4':
+            cache = W3_KV_CACHE_BYTES
     for flag, value in (('--max-model-len', context), ('--max-num-seqs', sequences),
                         ('--gpu-memory-utilization', budget), ('--port', args.port),
                         ('--max-num-batched-tokens', batched_tokens)):
@@ -236,13 +247,23 @@ def engine_command(args):
     return command
 
 
-def model_mounts(environment):
+def weights_mode(args, environment):
+    if args.release not in W3_RELEASES:
+        if args.weights == 'w3a4':
+            raise ValueError(f'--weights w3a4 is not available for the {args.release} release')
+        return 'mxfp4'
+    if args.weights == 'auto':
+        return 'w3a4' if environment.get('PAITON_W3ROT_DIR') else 'mxfp4'
+    return args.weights
+
+
+def model_mounts(environment, weights):
     mounts = []
     for variable, destination, writable in (
         ('PAITON_TARGET_DIR', '/models/target', False),
         ('PAITON_DRAFT_DIR', '/models/draft', False),
         ('PAITON_CACHE_DIR', '/cache', True),
-    ):
+    ) + ((('PAITON_W3ROT_DIR', '/models/w3rot', False),) if weights == 'w3a4' else ()):
         setting = environment.get(variable)
         if not setting:
             raise ValueError(f'Set {variable} to an existing {"writable cache" if writable else "checkpoint"} directory')
@@ -264,7 +285,8 @@ def docker_command(args, environment):
     image = args.image or IMAGES[args.release]
     if image.startswith('-') or any(c.isspace() for c in image):
         raise ValueError('--image must be a Docker image reference')
-    engine = engine_command(args)
+    weights = weights_mode(args, environment)
+    engine = engine_command(args, weights)
     command = ['docker', 'run', '--rm', '--name', name, '--network', 'host',
                '--device', '/dev/kfd', '--device', '/dev/dri',
                '--group-add', 'video', '--ipc', 'host']
@@ -282,11 +304,16 @@ def docker_command(args, environment):
             command += ['-e', variable + '=' + environment[variable]]
     if prefix_caching_enabled(args):
         command += ['-e', 'RADIANCE_GDN_LAZY=0']
-    if args.profile == 'chat':
+    if args.profile == 'chat' or weights == 'w3a4':
+        # The allocator setting the chat profile and the W3A4 KV budget were measured with.
         command += ['-e', 'PYTORCH_ALLOC_CONF=max_split_size_mb:64']
+    if weights == 'mxfp4' and args.release in W3_RELEASES:
+        # All three flags: the runtime rejects W3A4 prefill without W3 decode.
+        for variable in W3_FLAGS:
+            command += ['-e', variable + '=0']
     if args.detach:
         command.append('--detach')
-    return command + model_mounts(environment) + [image] + engine
+    return command + model_mounts(environment, weights) + [image] + engine
 
 
 def main(argv=None):
@@ -301,6 +328,9 @@ def main(argv=None):
     except ValueError as error:
         arguments.error(str(error))
     print('Exposing /dev/dri; GPU selection follows your visibility environment and runtime.', file=sys.stderr)
+    if args.weights == 'auto' and args.release in W3_RELEASES and weights_mode(args, os.environ) == 'mxfp4':
+        print('Serving MXFP4 weights; set PAITON_W3ROT_DIR to the downloaded 3-bit weights for faster decode and prefill.',
+              file=sys.stderr)
     if args.dry_run:
         print(json.dumps(command, indent=2))
         return 0
