@@ -29,31 +29,66 @@ def release_command(release):
     speculative = {'method': 'dflash', 'model': '/models/draft',
                    'num_speculative_tokens': 7, 'draft_tensor_parallel_size': 1,
                    'attention_backend': 'TRITON_ATTN', 'max_model_len': context,
-                   'disable_padded_drafter_batch': True, 'draft_sample_method': 'greedy'}
+                   'disable_padded_drafter_batch': True,
+
+                   #'draft_sample_method': 'greedy',
+                   'draft_sample_method': 'probabilistic',
+                   #'draft_confidence_threshold': 0.5 # not supported, use --speculative-draft-limits # also not supported, use num_speculative_tokens_per_batch_size
+                   'num_speculative_tokens_per_batch_size': [[1, 3, 7], [4, 7, 4], [8, 256, 1]]
+                   }
     return [
         'serve', '/models/target', '--tokenizer', '/models/target',
         '--served-model-name', 'Qwen3.8', '--host', '127.0.0.1', '--port', '18982',
         '--tensor-parallel-size', '1', '--dtype', 'bfloat16',
         '--max-model-len', str(context), '--max-num-seqs', str(sequences),
         #'--max-num-batched-tokens', '4096',
-        '--max-num-batched-tokens', '8192',
+        #'--max-num-batched-tokens', '8192',
+        '--max-num-batched-tokens', '1024',
+
          '--kv-cache-dtype', 'fp8',
          #'--backend', 'triton',
-        '--language-model-only',
+        
+        #'--language-model-only',
+
+        #? --block-size 16
+
         '--kv-cache-memory-bytes', str(cache), '--gpu-memory-utilization', '0.98',
         '--no-enable-prefix-caching', 
         '--enable-chunked-prefill',
         '--safetensors-load-strategy', 'lazy', '--attention-backend', 'R4D',
         '--compilation-config', json.dumps(compilation),
-        '--speculative-config', json.dumps(speculative), '--mamba-cache-mode', mamba,
+        '--speculative-config', json.dumps(speculative),
+        #'--speculative-draft-limits', '2,4,8', # also not supported, use num_speculative_tokens_per_batch_size
+        
+        '--mamba-cache-mode', mamba,
+
         '--mamba-cache-dtype', 'bfloat16', '--mamba-ssm-cache-dtype', 'bfloat16',
         
         '--no-async-scheduling', 
         #'--async-scheduling', # not supported if disable_padded_drafter_batch is enabled
         
         '--enable-auto-tool-choice',
-        '--tool-call-parser', 'qwen3_coder', '--reasoning-parser', 'qwen3',
-        '--override-generation-config', json.dumps({'temperature': 0.7, 'top_p': 0.95, 'top_k': 20}),
+        '--tool-call-parser', 'qwen3_coder',
+        '--reasoning-parser', 'qwen3',
+        #'--enable-in-reasoning',
+        '--structured-outputs-config', '{"reasoning_parser": "qwen3", "enable_in_reasoning": true}',
+
+        '--generation-config', 'auto',
+        '--override-generation-config', json.dumps({
+            'temperature': 0.7,
+            'min_p': 0.08,
+            'top_p': 0.95,
+            'top_k': 20,
+            'repetition_penalty': 1.05,
+            #'presence_penalty': 0.1,
+            'presence_penalty': 0.3,
+            'stop': ['<|im_end|>', '<|endoftext|>'],
+            'repetition_detection': {
+                'max_pattern_size': 64,
+                'min_pattern_size': 4,
+                'min_count': 3
+            }
+        }),
         '--seed', '42',
     ]
 
