@@ -153,10 +153,6 @@ RUN pip install --no-cache-dir \
 # import the donor image's old SDK paths into this image.
 # ------------------------------------------------------------
 
-# vLLM 0.30 runtime ROCm detection imports the AMD SMI Python binding.
-# The ROCm pip SDK ships it under share/amd_smi rather than normal site-packages.
-ENV PYTHONPATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/share/amd_smi:$PYTHONPATH
-
 ENV AITER_ROCM_ARCH=gfx942;gfx950 \
     AITER_ROOT_DIR=/cache/aiter \
     AMDGPU_TARGETS=gfx1201 \
@@ -296,7 +292,7 @@ print("paiton:", version("paiton-vllm-plugin"))
 print("aiter:", version("amd-aiter"))
 print("quark:", version("amd-quark"))
 
-assert version("vllm").startswith("0.30.0"), version("vllm")
+assert version("vllm") == "0.30.0+rocm100"
 assert version("torch") == "2.13.0+rocm10.0.0"
 assert version("paiton-vllm-plugin") == "0.3.2.dev2026091801"
 assert version("amd-aiter") == "0.1.21.post1"
@@ -307,13 +303,6 @@ assert importlib.util.find_spec("aiter")
 assert importlib.util.find_spec("aiter_meta")
 assert importlib.util.find_spec("flydsl")
 
-from pathlib import Path
-cli_module = Path("/opt/venv/lib/python3.12/site-packages/vllm/entrypoints/cli/main.py")
-assert cli_module.is_file(), cli_module
-print("vLLM CLI module:", cli_module)
-print("/opt/venv/bin/vllm exists:", Path("/opt/venv/bin/vllm").is_file())
-print("/usr/local/bin/vllm exists:", Path("/usr/local/bin/vllm").is_file())
-
 print("Build-time validation OK")
 PY
 
@@ -323,37 +312,34 @@ PY
 # the runtime command.
 # ------------------------------------------------------------
 
-# Do not rely on pip's console-script wrapper here.  The AMD base image
-# uses /opt/venv, and invoking the vLLM CLI module directly avoids PATH/
-# entry-point placement issues while still using the exact same vLLM CLI.
-ENTRYPOINT ["/opt/venv/bin/python", "-m", "vllm.entrypoints.cli.main"]
+ENTRYPOINT ["/usr/local/bin/vllm"]
 
 CMD ["serve", "/models/target", \
-  "--tokenizer", "/models/target", \
-  "--served-model-name", "Qwen3.8", \
-  "--host", "127.0.0.1", \
-  "--port", "18982", \
-  "--tensor-parallel-size", "1", \
-  "--dtype", "bfloat16", \
-  "--max-model-len", "200000", \
-  "--max-num-seqs", "1", \
-  "--max-num-batched-tokens", "4096", \
-  "--kv-cache-dtype", "fp8", \
-  "--kv-cache-memory-bytes", "6979321856", \
-  "--gpu-memory-utilization", "0.98", \
-  "--no-enable-prefix-caching", \
-  "--enable-chunked-prefill", \
-  "--language-model-only", \
-  "--safetensors-load-strategy", "lazy", \
-  "--attention-backend", "R4D", \
-  "--compilation-config", "{\"cudagraph_capture_sizes\": [1, 2, 4, 8], \"pass_config\": {\"fuse_norm_quant\": true, \"fuse_act_quant\": true}}", \
-  "--speculative-config", "{\"method\": \"dflash\", \"model\": \"/models/draft\", \"num_speculative_tokens\": 7, \"draft_tensor_parallel_size\": 1, \"attention_backend\": \"TRITON_ATTN\", \"max_model_len\": 200000, \"disable_padded_drafter_batch\": true, \"draft_sample_method\": \"greedy\"}", \
-  "--mamba-cache-mode", "none", \
-  "--mamba-cache-dtype", "bfloat16", \
-  "--mamba-ssm-cache-dtype", "float16", \
-  "--no-async-scheduling", \
-  "--enable-auto-tool-choice", \
-  "--tool-call-parser", "qwen3_coder", \
-  "--reasoning-parser", "qwen3", \
-  "--override-generation-config", "{\"temperature\": 0.7, \"top_p\": 0.95, \"top_k\": 20}", \
-  "--seed", "42"]
+     "--tokenizer", "/models/target", \
+     "--served-model-name", "Qwen3.8", \
+     "--host", "127.0.0.1", \
+     "--port", "18982", \
+     "--tensor-parallel-size", "1", \
+     "--dtype", "bfloat16", \
+     "--max-model-len", "200000", \
+     "--max-num-seqs", "1", \
+     "--max-num-batched-tokens", "4096", \
+     "--kv-cache-dtype", "fp8", \
+     "--kv-cache-memory-bytes", "6979321856", \
+     "--gpu-memory-utilization", "0.98", \
+     "--no-enable-prefix-caching", \
+     "--enable-chunked-prefill", \
+     "--language-model-only", \
+     "--safetensors-load-strategy", "lazy", \
+     "--attention-backend", "R4D", \
+     "--compilation-config", "{\"cudagraph_capture_sizes\": [1, 2, 4, 8], \"pass_config\": {\"fuse_norm_quant\": true, \"fuse_act_quant\": true}}", \
+     "--speculative-config", "{\"method\": \"dflash\", \"model\": \"/models/draft\", \"num_speculative_tokens\": 7, \"draft_tensor_parallel_size\": 1, \"attention_backend\": \"TRITON_ATTN\", \"max_model_len\": 200000, \"disable_padded_drafter_batch\": true, \"draft_sample_method\": \"greedy\"}", \
+     "--mamba-cache-mode", "none", \
+     "--mamba-cache-dtype", "bfloat16", \
+     "--mamba-ssm-cache-dtype", "float16", \
+     "--no-async-scheduling", \
+     "--enable-auto-tool-choice", \
+     "--tool-call-parser", "qwen3_coder", \
+     "--reasoning-parser", "qwen3", \
+     "--override-generation-config", "{\"temperature\": 0.7, \"top_p\": 0.95, \"top_k\": 20}", \
+     "--seed", "42"]

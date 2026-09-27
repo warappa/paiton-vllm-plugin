@@ -1,0 +1,272 @@
+# ============================================================
+# Paiton Qwen3.8 DFlash2 on vLLM 0.30.0
+#
+# The donor image supplies ONLY:
+#   - Paiton plugin wheel
+#   - native DFlash runtime
+#   - radiance_kernels.py
+#   - ROCm-10-compatible AITER payload
+#
+# We deliberately do NOT inherit the donor's:
+#   - vLLM
+#   - PyTorch
+#   - ROCm SDK
+#   - paiton_runtime_compat overlay
+# ============================================================
+
+FROM ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-200k-20260918-r2@sha256:32dab97330ea84b86967537d25f91878c30f21ff844f71369508c5a049b89178 AS paiton_donor
+
+# Clean AMD ROCm 10 / PyTorch 2.13 environment.
+FROM rocm/pytorch:rocm10.0_ubuntu24.04_py3.12_pytorch_release_2.13.0
+
+ENV VLLM_TARGET_DEVICE=rocm \
+    PYTORCH_ROCM_ARCH=gfx1201 \
+    MAX_JOBS=4
+#    PAITON_DFLASH_NATIVE=1
+
+ENV VLLM_DISABLE_PAITON_PLATFORM=1 \
+    VLLM_PLUGINS=register_paiton_models
+
+# Install the ROCm 10.0 development SDK needed to compile vLLM.
+RUN pip install --no-cache-dir \
+      --index-url https://stable.repo.amd.com/rocm/whl-next/ \
+      "rocm[devel,device-gfx1201]==10.0.0" && \
+    rocm-sdk init
+
+RUN test -f \
+    /opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib/cmake/hip-lang/hip-lang-config.cmake && \
+    echo "HIP CMake package found" && \
+    /opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/bin/amdclang++ --version
+
+# Make CMake use the complete development SDK, not _rocm_sdk_core.
+ENV ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \
+    HIP_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \
+    CMAKE_PREFIX_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib/cmake:$CMAKE_PREFIX_PATH \
+    PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/bin:$PATH
+
+# ------------------------------------------------------------
+# Build vLLM 0.30.0
+# ------------------------------------------------------------
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        build-essential \
+        cmake \
+        ninja-build && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN git clone \
+        --depth 1 \
+        --branch v0.30.0 \
+        https://github.com/vllm-project/vllm.git \
+        /tmp/vllm && \
+    cd /tmp/vllm && \
+    pip install -r requirements/rocm.txt && \
+    VLLM_TARGET_DEVICE=rocm \
+    PYTORCH_ROCM_ARCH=gfx1201 \
+    MAX_JOBS=4 \
+    pip install --no-build-isolation . && \
+    rm -rf /tmp/vllm
+
+# ------------------------------------------------------------
+# Install the exact Paiton plugin wheel from the qualified
+# vLLM-0.29 image, but WITHOUT its declared vLLM/Torch deps.
+# ------------------------------------------------------------
+
+COPY --from=paiton_donor \
+    /opt/paiton/wheels/paiton_vllm_plugin-0.3.2.dev2026091801-py3-none-any.whl \
+    /tmp/
+
+RUN pip install --no-deps \
+    /tmp/paiton_vllm_plugin-0.3.2.dev2026091801-py3-none-any.whl
+
+# ------------------------------------------------------------
+# Native DFlash2 bundle.
+# ------------------------------------------------------------
+
+#COPY --from=paiton_donor \
+#    /opt/paiton/runtime/dflash-down \
+#    /opt/paiton/runtime/dflash-down
+
+COPY --from=paiton_donor \
+    /usr/local/lib/python3.12/dist-packages/amd_aiter-0.1.21.post1.dist-info \
+    /opt/venv/lib/python3.12/site-packages/amd_aiter-0.1.21.post1.dist-info
+
+# ------------------------------------------------------------
+# Paiton's shared Radiance dispatcher module.
+# This is NOT a Python distribution; it is a loose module.
+# ------------------------------------------------------------
+
+COPY --from=paiton_donor \
+    /usr/local/lib/python3.12/dist-packages/radiance_kernels.py \
+    /opt/venv/lib/python3.12/site-packages/radiance_kernels.py
+
+# ------------------------------------------------------------
+# ROCm-10-compatible AITER payload from the donor image.
+#
+# We intentionally copy the compiled package rather than pulling
+# a public AITER wheel, because the public 0.1.21.post1 wheels
+# are ROCm 7.x.
+# ------------------------------------------------------------
+
+COPY --from=paiton_donor \
+    /usr/local/lib/python3.12/dist-packages/aiter \
+    /opt/venv/lib/python3.12/site-packages/aiter
+
+COPY --from=paiton_donor \
+    /usr/local/lib/python3.12/dist-packages/aiter_meta \
+    /opt/venv/lib/python3.12/site-packages/aiter_meta
+
+# AITER's Python metadata and FlyDSL dependency.
+COPY --from=paiton_donor \
+    /usr/local/lib/python3.12/dist-packages/flydsl \
+    /opt/venv/lib/python3.12/site-packages/flydsl
+
+COPY --from=paiton_donor \
+    /usr/local/lib/python3.12/dist-packages/flydsl-0.3.2.dist-info \
+    /opt/venv/lib/python3.12/site-packages/flydsl-0.3.2.dist-info
+
+# ------------------------------------------------------------
+# AMD Quark is pure Python at 0.12.post1.
+# ------------------------------------------------------------
+
+RUN pip install --no-cache-dir \
+    amd-quark==0.12.post1
+
+# ------------------------------------------------------------
+# IMPORTANT:
+# Paiton's native hook contains SHA256 pins for the vLLM source
+# files it modifies. Those pins are for vLLM 0.29.
+#
+# Replace ONLY the two upstream-vLLM hashes with the actual
+# vLLM 0.30.0 hashes.
+#
+# The radiance_kernels hash remains fixed and is verified.
+# ------------------------------------------------------------
+
+# RUN python3 - <<'PY'
+# from pathlib import Path
+# import hashlib
+# import re
+
+# hooks = Path(
+#     "/usr/local/lib/python3.12/dist-packages/"
+#     "paiton_vllm_plugin/dflash/native_hooks.py"
+# )
+
+# files = {
+#     "MODEL": Path(
+#         "/usr/local/lib/python3.12/dist-packages/"
+#         "vllm/model_executor/models/qwen3_dflash.py"
+#     ),
+#     "UTILS": Path(
+#         "/usr/local/lib/python3.12/dist-packages/"
+#         "vllm/v1/worker/gpu/spec_decode/dflash/utils.py"
+#     ),
+#     "DISPATCH": Path(
+#         "/usr/local/lib/python3.12/dist-packages/"
+#         "radiance_kernels.py"
+#     ),
+# }
+
+# text = hooks.read_text()
+
+# hashes = {
+#     key: hashlib.sha256(path.read_bytes()).hexdigest()
+#     for key, path in files.items()
+# }
+
+# print("vLLM 0.30.0 DFlash hashes:")
+# for key, value in hashes.items():
+#     print(f"  {key}: {value}")
+
+# # Make sure vLLM 0.30 still has the exact integration points.
+# model_source = files["MODEL"].read_text()
+# utils_source = files["UTILS"].read_text()
+
+# boundary = (
+#     "        self.input_layernorm = "
+#     "RMSNorm(config.hidden_size, eps=config.rms_norm_eps)"
+# )
+
+# if model_source.count(boundary) != 1:
+#     raise RuntimeError(
+#         "vLLM 0.30.0 qwen3_dflash MLP boundary changed; "
+#         "Paiton hook needs a manual port."
+#     )
+
+# if utils_source.count('set_model_tag("dflash_head")') != 1:
+#     raise RuntimeError(
+#         "vLLM 0.30.0 DFlash head tag changed; "
+#         "Paiton hook needs a manual port."
+#     )
+
+# # Verify Radiance is still the known Paiton dispatcher.
+# expected_dispatch = (
+#     "7b7fa7047d4922d4fd1750a09beb8dc392978296a8f654a3d7ae05735ece6548"
+# )
+
+# if hashes["DISPATCH"] != expected_dispatch:
+#     raise RuntimeError(
+#         "radiance_kernels.py does not match the qualified Paiton dispatcher: "
+#         + hashes["DISPATCH"]
+#     )
+
+# # Replace the three values inside HASHES={...}.
+# pattern = re.compile(
+#     r"HASHES=\{MODEL:'[0-9a-f]+',\s*"
+#     r"UTILS:'[0-9a-f]+',\s*"
+#     r"DISPATCH:'[0-9a-f]+'\}"
+# )
+
+# replacement = (
+#     "HASHES={"
+#     f"MODEL:'{hashes['MODEL']}',"
+#     f"UTILS:'{hashes['UTILS']}',"
+#     f"DISPATCH:'{hashes['DISPATCH']}'"
+#     "}"
+# )
+
+# new_text, count = pattern.subn(replacement, text, count=1)
+
+# if count != 1:
+#     raise RuntimeError("Could not locate Paiton HASHES declaration")
+
+# hooks.write_text(new_text)
+
+# print("Patched native_hooks.py for vLLM 0.30.0")
+# PY
+
+# ------------------------------------------------------------
+# Build-time package sanity check.
+# Do NOT import torch/vllm here because ROCm GPU access is
+# unavailable during podman build.
+# ------------------------------------------------------------
+
+# Verify package versions without initializing the GPU.
+RUN python3 - <<'PY'
+from importlib.metadata import version
+import importlib.util
+
+print("torch:", version("torch"))
+print("vllm:", version("vllm"))
+print("paiton:", version("paiton-vllm-plugin"))
+print("aiter:", version("amd-aiter"))
+print("quark:", version("amd-quark"))
+
+assert version("vllm") == "0.30.0+rocm100"
+assert version("torch") == "2.13.0+rocm10.0.0"
+assert version("paiton-vllm-plugin") == "0.3.2.dev2026091801"
+assert version("amd-aiter") == "0.1.21.post1"
+assert version("amd-quark") == "0.12.post1"
+
+assert importlib.util.find_spec("radiance_kernels")
+assert importlib.util.find_spec("aiter")
+assert importlib.util.find_spec("aiter_meta")
+assert importlib.util.find_spec("flydsl")
+
+print("Build-time validation OK")
+PY
+
+ENTRYPOINT ["vllm"]
