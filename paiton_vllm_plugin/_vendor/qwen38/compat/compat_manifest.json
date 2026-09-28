@@ -135,7 +135,7 @@
     "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py": {
       "overlay": "overlays/vllm/v1/core/kv_cache_utils.py",
       "original_sha256": "5294bef00c2f127f672a37eda9acbe440418f01622ef49b9be57761c54ebd7f6",
-      "overlay_sha256": "94307a5486f9af55a3f234f73947d90cf02d0289a32f81159d48eaa1b3219a44"
+      "overlay_sha256": "96625eb931c1ece491c0c3194c2c26576aa56b6b45c6500ecaf4198e6583c38e"
     },
     "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/async_scheduler.py": {
       "overlay": "overlays/vllm/v1/core/sched/async_scheduler.py",

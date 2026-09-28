@@ -8,7 +8,7 @@
     },
     "compat/compat_manifest.json": {
       "size_bytes": 17586,
-      "sha256": "d2b674c59d0e89bb4617b62d8a4f5849c239b0bcf19221d459cebafac2b77619"
+      "sha256": "fcbcde9104ff2fe4c3a378f8eee5fbf386665481219aaa3e0102e01ce422f5d9"
     },
     "compat/overlays/aiter/ops/triton/_triton_kernels/attention/unified_attention.py": {
       "size_bytes": 32602,
@@ -139,8 +139,8 @@
       "sha256": "aaf2d00ea01a8d8132c30b78359c1ff60e051f12b97b1ce0c37d0fdffcdfaa03"
     },
     "compat/overlays/vllm/v1/core/kv_cache_utils.py": {
-      "size_bytes": 102029,
-      "sha256": "94307a5486f9af55a3f234f73947d90cf02d0289a32f81159d48eaa1b3219a44"
+      "size_bytes": 103112,
+      "sha256": "96625eb931c1ece491c0c3194c2c26576aa56b6b45c6500ecaf4198e6583c38e"
     },
     "compat/overlays/vllm/v1/core/sched/async_scheduler.py": {
       "size_bytes": 3720,

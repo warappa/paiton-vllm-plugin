@@ -38,42 +38,81 @@ for exactly what was tested.
 
 ## Current release
 
-**26 September 2026: optional 3-bit W3A4 weights, +19.9% weighted decode.**
-The updated 65K image can serve our own rotated 3-bit weights, [EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4](https://huggingface.co/EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4), alongside the same target checkpoint and DFlash2 drafter. Against the 24 September release, weighted decode rises from **153.8 to 184.4 tok/s (+19.9%)**, aggregate throughput at concurrency eight from 425.3 to **492.1 tok/s (+15.7%)**, and prefill by **+5.0% to +12.7%** (up to 4,165 input tok/s). Most of the memory the smaller weights free goes to the KV cache: **250,578 tokens**, room for 3.8 concurrent 65K-token requests instead of 2.7. The trade-off is knowledge recall: MMLU-Pro scores about 3 points lower, while GSM8K, HumanEval and a 61K-token needle test stay within noise. Without the 3-bit weights, the image serves MXFP4 as before, with this round's other improvements (+1.5% weighted decode). See [3-bit W3A4 weights](#faster-decode-and-prefill-3-bit-w3a4-weights-optional).
+**28 September 2026: one image for 65K multi-request serving and 200K long context.**
+The same image runs in two modes on one Radeon AI PRO R9700 (32 GB). Choose the mode when you start it:
 
-| Image default | Total context limit | Maximum scheduled requests | Image |
-| --- | ---: | ---: | --- |
-| Updated 65K · MXFP4 or 3-bit W3A4 weights | 65,536 tokens | 8 | `ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1` |
-| Existing 200K · MXFP4 weights | 200,000 tokens | 1 | [18 September 200K package](https://github.com/users/Eliovp/packages/container/paiton-vllm-plugin/1266757900) |
+| Mode | Start command | Context per request | Requests at once | Best for |
+|---|---|---:|---:|---|
+| **65K** (default) | `bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh` | 65,536 tokens | up to 8 | several users or agents at once |
+| **Long context** | `bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh --context 200000` | 200,000 tokens | 1 | one long conversation, a large codebase or document |
 
-Both image defaults use FP8 KV caching and disable automatic prefix caching (APC).
-APC remains an optional launcher setting. The existing 200K `chat` profile below
-is the separately validated long-conversation configuration; its image has not
-been replaced by this 65K throughput update.
-The launchers pin images by digest under `ghcr.io/eliovp/paiton-vllm-plugin`.
-No registry login is required.
+Without options you get the 65K text mode, the configuration we benchmark. Long context, image input
+(`--vision`) and prefix caching start only when you ask for them.
 
-**Context is configurable at startup.** The image names select defaults;
-`--context` changes the target and draft limits without rebuilding. Available
-VRAM and the supported model range still determine what fits. The performance
-results below use the unchanged 65,536-token benchmark profile.
+- **65K mode.** With the optional [3-bit weights](#optional-3-bit-w3a4-weights), a 4-bit KV cache holds 1.7×
+  as many tokens: six 61K-token or eight 32K-token requests now run together (248 and 339 tok/s combined),
+  and four 61K-token requests decode 17% faster. Accuracy matches the FP8 cache within noise: GSM8K 96.1%,
+  HumanEval 93.9%, MMLU-Pro subset 61.4%, needle at 61K tokens 100%.
+- **Long-context mode.** One conversation at a time, with prefix caching. A new 199K-token prompt takes 94 s
+  to the first token (102 s with MXFP4); a follow-up turn that reuses it takes 1.2 s. Decode runs at 73 to
+  78 tok/s at that length, and every planted fact in our 199K-token test prompts was found. 220,000 tokens
+  is tested too.
+- **Images.** Add `--vision` in the 65K mode for screenshots, UI captures or charts; see
+  [Images and vision](#images-and-vision).
+- **Crash fix.** The engine no longer stops under three to five concurrent requests; see the
+  [release notes](#release-notes-28-september-2026).
+
+Both modes work with the 3-bit weights (faster, recommended) or with the MXFP4 checkpoint alone; see
+[Model weights](#model-weights-and-existing-downloads). The image is
+`ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1`; the launcher pins it by digest, and no registry
+login is required.
+
+### Release notes: 28 September 2026
+
+The image `ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1`
+(`sha256:487c97d51e5b4a3fcd0a206e53d842a52dd56a199d8ee3e884f48815093a80d4`) is the 26 September 65K image with the changes below. Weights, drafter and the
+other serving settings are unchanged. Update this repository to get the launcher that selects it.
+
+- **New: one image for both modes.** `run-rocm10.sh` starts the 65K mode. A `--context` above 65,536, for
+  example `--context 200000`, starts the long-context mode on the same image: one request, prefix caching
+  and an 8 GiB FP8 KV cache (the settings of the earlier 200K `chat` profile). `run-rocm10-65k.sh` and
+  `run-rocm10-200k.sh` still work; the 200K script now uses this image instead of the 18 September 200K
+  image.
+- **New: image input.** `--vision` serves the checkpoint's vision encoder in the 65K mode; see
+  [Images and vision](#images-and-vision).
+- **New: 4-bit KV cache** with the 3-bit weights in the 65K mode, on by default; see
+  [4-bit KV cache](#more-context-capacity-4-bit-kv-cache). New launcher option `--kv-cache auto|kv4|fp8`.
+- **Fixed: engine stop under concurrent load.** With three to five requests at once, and rarely with one
+  very short prompt, the 26 September image could stop with
+  `RuntimeError: Paiton GDN norm nonfinite/arithmetic error: 1`, and requests failed until a restart.
+  Unused padding rows in some GPU steps held uninitialized memory, and a safety check in the
+  recurrent-layer norm stopped the engine on them. The image now zeroes these rows: a soak test of 10,002
+  such steps ran without errors, and outputs are unchanged.
+- **If you stay on the 26 September image,** run its container with `-e RADIANCE_DYNAMIC_WIDTH=0`. In our
+  runs this avoided more than 99% of these steps. The launcher does not pass it; `--dry-run` prints the full
+  Docker command.
+- **Unchanged:** prefill and single-request decode speed.
 
 ## Run the current release
 
-Use Linux x86-64, Python 3, Docker, and one Radeon AI PRO R9700 with 32 GB VRAM and working
-AMD GPU device access. Run the following commands from the repository root.
-The images contain the runtime; download the target and draft weights separately
-using the Hugging Face CLI (`hf`), or point the variables at existing copies of
+You need:
+
+- Linux x86-64 with Python 3 and Docker. Your user must be able to run `docker` without `sudo`, for example
+  as a member of the `docker` group; `sudo` would drop the exported `PAITON_*` variables.
+- One Radeon AI PRO R9700 with 32 GB VRAM and working AMD GPU device access.
+- About 75 GB of free disk: about 40 GB for the image (a 9.6 GB download), 23.4 GB for the target, 2.1 GB
+  for the draft and 9.55 GB for the optional 3-bit weights.
+
+Run the following commands from the repository root. The image contains the runtime; download the target
+and draft weights separately with the Hugging Face CLI (`hf`), or point the variables at existing copies of
 these exact snapshots.
 
-The main setup below uses the **updated 65K image with APC off**, matching the
-benchmark configuration. The optional long-context profile remains available below.
+The commands below start the **65K mode**, the benchmark configuration. Add `--context 200000` for the
+**long-context mode**; see [Long context](#long-context-200k-and-220k).
 
-This release loads the **Unsloth NVFP4 checkpoint through the MXFP4 runtime path**.
-The 65K image can also serve optional 3-bit W3A4 weights on top of this
-checkpoint; see [Optional: 3-bit W3A4 weights](#optional-3-bit-w3a4-weights).
-The AMD checkpoint and automatic downloader in the historical release below are
-for the older images.
+This release loads the **Unsloth NVFP4 checkpoint through the MXFP4 runtime path** and can also serve the
+optional 3-bit W3A4 weights on top of it; see [Optional: 3-bit W3A4 weights](#optional-3-bit-w3a4-weights).
+The AMD checkpoint and automatic downloader in the historical release below are for the older images.
 
 ## Model weights and existing downloads
 
@@ -84,7 +123,7 @@ the draft; the 3-bit weights are optional:
 | --- | --- | --- |
 | Target | `unsloth/Qwen3.8-27B-NVFP4` | `f0b7c9e722f5565102fff8481c99e4d86ae099c7` |
 | DFlash2 draft | `tcclaviger/Qwen3.8-27B-DFlash2-FP8` | `ee0cb26a8279b7910cc28d82a8a3e15e4728d56f` |
-| 3-bit W3A4 weights (optional, 65K image) | `EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4` | `278486debe64e21e5e9d45ac8d02798d72fbdf83` |
+| 3-bit W3A4 weights (optional) | `EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4` | `d74ae7d5f5f1b4b45dd12fb1271e3664283a2ec1` |
 
 The native `paiton serve qwen38-nvfp4` preset above is non-speculative and does
 not use the 3-bit weights. The instructions here preserve the Docker release's
@@ -100,7 +139,7 @@ if `hf` is not available.
 ```bash
 export PAITON_TARGET_DIR="$PWD/model-cache/qwen38-nvfp4"
 export PAITON_DRAFT_DIR="$PWD/model-cache/qwen38-dflash2"
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260926"
+export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-20260928"
 mkdir -p "$PAITON_TARGET_DIR" "$PAITON_DRAFT_DIR" "$PAITON_CACHE_DIR"
 
 hf download unsloth/Qwen3.8-27B-NVFP4 \
@@ -116,7 +155,7 @@ If either download fails, resolve that failure before starting the server.
 
 ### Optional: 3-bit W3A4 weights
 
-For the faster 3-bit mode of the 65K image, also download our rotated 3-bit weights
+For faster decode and prefill, also download our rotated 3-bit weights
 (9.55 GB). They add to the target and draft above; they do not replace them.
 
 ```bash
@@ -124,12 +163,12 @@ export PAITON_W3ROT_DIR="$PWD/model-cache/qwen38-w3rot-int3"
 mkdir -p "$PAITON_W3ROT_DIR"
 
 hf download EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4 \
-  --revision 278486debe64e21e5e9d45ac8d02798d72fbdf83 \
+  --revision d74ae7d5f5f1b4b45dd12fb1271e3664283a2ec1 \
   --local-dir "$PAITON_W3ROT_DIR"
 (cd "$PAITON_W3ROT_DIR" && sha256sum -c SHA256SUMS)
 ```
 
-When `PAITON_W3ROT_DIR` is set, the 65K launcher serves these weights. For an
+When `PAITON_W3ROT_DIR` is set, the launcher serves these weights in both modes. For an
 existing copy of the same revision, point `PAITON_W3ROT_DIR` at that folder
 instead. See [what the 3-bit weights change](#faster-decode-and-prefill-3-bit-w3a4-weights-optional).
 
@@ -142,7 +181,7 @@ the same pinned files. Do not point to the parent directory holding both models.
 ```bash
 export PAITON_TARGET_DIR="/absolute/path/to/qwen38-nvfp4"
 export PAITON_DRAFT_DIR="/absolute/path/to/qwen38-dflash2"
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260926"
+export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-20260928"
 mkdir -p "$PAITON_CACHE_DIR"
 ```
 
@@ -157,18 +196,22 @@ separate writable runtime cache. Then [launch below](#launch-with-prepared-local
 If you previously ran `hf download` without `--local-dir`, select the Hub cache
 that contains both pinned snapshots. The following **65K Docker command** mounts
 the entire cache read-only and selects the snapshots inside it, preserving their
-links to `blobs/`. It uses the same image and inference settings as the default
-65K launcher with MXFP4 weights; only the weight paths differ. The three
-`PAITON_W3_*=0` variables switch off the image's 3-bit path, as the launcher does
-without `PAITON_W3ROT_DIR`. For the 3-bit weights, download them to a standalone
-folder as [shown above](#optional-3-bit-w3a4-weights) and use the launcher.
+links to `blobs/`. It starts the 65K mode with MXFP4 weights and
+the same settings as the launcher; only the weight paths differ. The three
+`PAITON_W3_*=0` variables switch off the image's 3-bit path and the two
+`PAITON_KV4*=0` variables its 4-bit KV cache, as the launcher does without
+`PAITON_W3ROT_DIR`. For the 3-bit weights, the long-context mode or `--vision`, use
+the launcher instead. It cannot use Hub-cache snapshots: it needs standalone target
+and draft folders ([First download](#first-download) or
+[Already in a local folder](#already-in-a-local-folder)), plus the
+[3-bit folder](#optional-3-bit-w3a4-weights) for the 3-bit weights.
 
 For a cache on another drive, replace the first export with
 `export HF_HUB_CACHE="/absolute/path/to/your/hub-cache"`.
 
 ```bash
 export HF_HUB_CACHE="${HF_HUB_CACHE:-${HUGGINGFACE_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub}}"
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-65k-20260926"
+export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-20260928"
 mkdir -p "$PAITON_CACHE_DIR"
 
 docker run --rm --name paiton-qwen38-65k-cached --network host \
@@ -177,7 +220,9 @@ docker run --rm --name paiton-qwen38-65k-cached --network host \
   --mount "type=bind,src=$PAITON_CACHE_DIR,dst=/cache" \
   -e HF_HUB_OFFLINE=1 \
   -e PAITON_W3_DECODE=0 -e PAITON_W3_PREFILL=0 -e PAITON_W3_A4=0 \
-  ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1@sha256:c4134aba665f6dd3b89354a43be2b5b814f7078db456351647a3f1b106a0da49 \
+  -e PAITON_KV4=0 -e PAITON_KV4_CAPACITY=0 \
+  -e ROCR_VISIBLE_DEVICES -e HIP_VISIBLE_DEVICES -e CUDA_VISIBLE_DEVICES \
+  ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1@sha256:487c97d51e5b4a3fcd0a206e53d842a52dd56a199d8ee3e884f48815093a80d4 \
   serve /hf-hub/models--unsloth--Qwen3.8-27B-NVFP4/snapshots/f0b7c9e722f5565102fff8481c99e4d86ae099c7 \
   --tokenizer /hf-hub/models--unsloth--Qwen3.8-27B-NVFP4/snapshots/f0b7c9e722f5565102fff8481c99e4d86ae099c7 \
   --served-model-name Qwen3.8 \
@@ -218,16 +263,26 @@ snapshot at `/models/target` or `/models/draft`: that can break its blob links.
 
 ### Launch with prepared local folders
 
-After completing **First download** or **Already in a local folder**, run:
+After completing **First download** or **Already in a local folder**, start one of the two modes:
 
 ```bash
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-65k.sh
+# 65K mode: up to 8 requests at once (default)
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh
+
+# Long-context mode: one conversation of up to 200,000 tokens, with prefix caching
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh --context 200000
 ```
+
+Run one mode at a time on the GPU; stop the running server first with `docker stop paiton-qwen38`.
+Without other options, the launcher starts the 65K text mode, the configuration we benchmark. Long context,
+images (`--vision`) and prefix caching only start when you ask for them.
 
 With `PAITON_W3ROT_DIR` set, the launcher serves the 3-bit W3A4 weights; without
 it, it serves MXFP4 and says how to enable them. `--weights mxfp4` serves MXFP4
 even when the variable is set, and `--weights w3a4` stops with an error when it
-is missing.
+is missing. With the 3-bit weights, the 65K mode also uses the
+[4-bit KV cache](#more-context-capacity-4-bit-kv-cache); `--kv-cache fp8` keeps
+the FP8 cache.
 
 The current launcher checks that directories exist, but does not check that
 checkpoint files are present. An error about `/models/target` and `config.json`
@@ -236,9 +291,14 @@ Check the selected host directory and both downloads before retrying. The Hub
 cache option above launches Docker directly and does not need this extra step.
 
 The server runs in the foreground at `http://127.0.0.1:18982/v1`, with API model
-name **`Qwen3.8`**. First startup loads/converts weights and compiles runtime
-components; wait for readiness before sending requests or measuring throughput.
-The persistent cache is reused on subsequent starts. The first image pull is
+name **`Qwen3.8`**. Add `--detach` to run it in the background instead; follow its
+log with `docker logs -f paiton-qwen38` and stop it with `docker stop paiton-qwen38`
+(the stopped container and its log are removed). First startup loads/converts
+weights and compiles runtime components: about 7 minutes with the 3-bit weights and
+an empty `PAITON_CACHE_DIR`. Wait for readiness before sending requests or measuring
+throughput.
+The persistent cache is reused on subsequent starts. The container writes it as root,
+so removing `runtime-cache/` later needs `sudo`. The first image pull is
 approximately 9.6 GB, excluding model weights.
 
 From another terminal:
@@ -250,33 +310,21 @@ curl --fail http://127.0.0.1:18982/v1/chat/completions \
   -d '{"model":"Qwen3.8","messages":[{"role":"user","content":"Write a Python function that removes duplicate items while preserving order."}],"temperature":0.7,"top_p":0.95,"max_tokens":256,"stream":true,"chat_template_kwargs":{"enable_thinking":false}}'
 ```
 
-For the separately validated 200K chat configuration, use the **standalone
-local-folder** setup above. Stop your 65K container (`paiton-qwen38-65k` for the
-launcher, or `paiton-qwen38-65k-cached` for the direct Hub-cache example), keep
-`PAITON_TARGET_DIR` and `PAITON_DRAFT_DIR` pointing to the standalone folders,
-and select the existing long-context image. The direct Hub-cache command above
-is specifically the 65K profile:
+For the long-context mode, use the launcher with the **standalone local-folder**
+setup above; the direct Hub-cache command is the 65K mode only. See
+[Long context](#long-context-200k-and-220k) for what it was tested with. The
+performance tables below are for the **65K mode**; they are not measurements of
+200K throughput.
 
-```bash
-export PAITON_CACHE_DIR="$PWD/runtime-cache/qwen38-rocm10-200k"
-mkdir -p "$PAITON_CACHE_DIR"
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-200k.sh --profile chat --context 200000
-```
-
-Select one profile at a time on the GPU. The 200K image passed a **198,989-token
-prompt** followed by generation, a fresh short request, and both ordinary and
-streaming XML tool calls. The performance tables below are for the **65K profile**;
-they are not measurements of 200K throughput.
-
-No private compiler checkout is needed to run these images. The full qualified
-runtime payload is distributed in the images; the public repository alone is
+No private compiler checkout is needed to run this image. The full qualified
+runtime payload is distributed in the image; the public repository alone is
 not a complete build context for this release.
 
 ## GPU, context, and memory controls
 
-The 65K and 200K names select startup presets. Context is **not compiled into the
-image**: the launchers can set both the target and DFlash draft limits at startup,
-using the existing images. The limit includes input and generated tokens. A larger
+Context is **not compiled into the image**: `--context` sets both the target and
+DFlash draft limits at startup, and above 65,536 tokens it selects the long-context
+mode. The limit includes input and generated tokens. A larger
 limit still requires sufficient cache and VRAM; it does not guarantee useful
 model quality at that length.
 The checkpoint's configured ceiling is 262,144 tokens; the largest serving
@@ -288,7 +336,7 @@ For example, if the R9700 is ROCm GPU 1:
 
 ```bash
 export ROCR_VISIBLE_DEVICES=1
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-200k.sh --profile chat
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh
 ```
 
 Use the index or GPU UUID appropriate to your system. `--list-gpus` lists physical
@@ -311,7 +359,7 @@ These controls do not make unsupported GPU architectures compatible with this im
 For a GPU shared with a desktop, start with the smaller preset:
 
 ```bash
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-65k.sh \
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh \
   --profile desktop
 ```
 
@@ -323,7 +371,7 @@ benchmark presets reserve a fixed KV pool and target a dedicated GPU.
 Customize the limits without rebuilding or downloading another image:
 
 ```bash
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-65k.sh \
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh \
   --profile desktop --context 16384
 ```
 
@@ -335,55 +383,63 @@ this runtime; startup reports the required and available cache sizes.
 Use `--dry-run` to inspect the complete Docker command, or `--help` for all options.
 Customized settings are separate from the benchmark configuration below.
 
-With the 3-bit weights, the unchanged 65K preset gives most of the memory they
-free to the KV cache: 9,381,235,631 instead of 6,535,819,798 bytes, or 250,578 instead
-of 174,634 tokens. In our tests, peak VRAM stayed within 0.3 GiB of the MXFP4
-preset (31.39 vs 31.37 GiB with four 61K-token requests). An explicit
-`--kv-cache-memory-bytes` or `--gpu-memory-utilization`, and the `desktop` and
-`chat` profiles, keep their own budgets.
+With the 3-bit weights, the 65K mode gives most of the memory they free to the KV
+cache: 8,859,648,000 bytes with the default 4-bit cache (393,216 tokens in vLLM's
+startup log) or 9,381,235,631 bytes (250,578 tokens) with `--kv-cache fp8`,
+against 6,535,819,798 bytes (174,634 tokens) for MXFP4. Under full load, peak VRAM
+was 31.8 GiB with the 4-bit cache and 31.6 GiB with the FP8 cache, with no
+out-of-memory errors. An explicit `--kv-cache-memory-bytes` or
+`--gpu-memory-utilization`, `--vision`, the `desktop` profile and the long-context
+mode use their own budgets.
 
-### 200K and 220K with prefix caching
+### Long context: 200K and 220K
 
-With your GPU visibility configured as above, use the chat profile for 200K,
-or set a larger context on the **same image**:
+Any `--context` above 65,536 starts the long-context mode on the **same image**:
 
 ```bash
 # 200K total context, including generated tokens
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-200k.sh \
-  --profile chat
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh --context 200000
 
-# Stop the existing server before selecting 220K instead
-docker stop paiton-qwen38-200k
-bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-200k.sh \
-  --profile chat --context 220000
+# Stop the running server before selecting 220K instead
+docker stop paiton-qwen38
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh --context 220000
 ```
 
-The chat profile uses one scheduled request, an 8 GiB KV pool, 1,024-token
-prefill chunks, prefix caching, and thinking disabled. It also applies the
-memory-allocation setting needed by this configuration. It leaves little spare
-VRAM: select a dedicated R9700 rather than a card driving a busy desktop.
-These settings differ from the 65K throughput benchmark configuration.
+The long-context mode uses one scheduled request, an 8 GiB FP8 KV pool, 1,024-token
+prefill chunks, prefix caching, and thinking disabled; these are the settings of
+the `chat` profile, and `run-rocm10-200k.sh` or `--profile chat` start the same
+mode. It also applies the memory-allocation setting needed by this configuration.
+It leaves little spare VRAM with MXFP4 weights (3.3 GiB more with the 3-bit
+weights): select a dedicated R9700 rather than a card driving a busy desktop.
+The checkpoint's limit is 262,144 tokens; 220,000 is the largest tested here.
 
-On one R9700, the 220K configuration correctly retrieved a value from a
-**215,005-token prompt**. The identical repeat reused **213,840 cached tokens**
-and completed in **1.77 seconds versus 130.00 seconds cold**; both answers were
-nine tokens at temperature zero. These are complete response times from one
-functional probe, not general latency or decode-throughput claims. Changed-prefix
-retrieval, 380- and 409-token answers without observed looping, a subsequent XML tool call,
-and a fresh short request also passed.
+Measured on one R9700 with a 198,989-token prompt:
 
-The unchanged release presets disable APC, so zero hits with their defaults is
+| | 3-bit weights | MXFP4 |
+|---|---:|---:|
+| New prompt, time to first token | 94 s | 102 s |
+| Follow-up turn that reuses the prompt | 1.2 s | 1.2 s |
+| Decode at this length | 73–78 tok/s | 63–68 tok/s |
+| Peak VRAM | 31.0 GiB | 31.8 GiB |
+
+The earlier 200K image needed 115 s for the same prompt. All planted facts (near 5%,
+50% and 95% of each prompt) were found. A multi-turn follow-up, a second 199K-token
+prompt, plain and streamed tool calls, and an over-limit request (rejected with
+HTTP 400) followed by a normal one all passed. With `--context 220000`, a
+215,000-token prompt answered after 105 s, and after 1.5 s when reused.
+
+The 65K mode does not use prefix caching (APC), so zero cache hits there are
 expected. The persistent disk cache used during startup is separate from the
 in-memory conversation prefix cache.
 
 `--prefix-caching on` enables the experimental APC configuration and selects the
 compatible recurrent-state settings. This changes memory requirements; do not
-assume the release preset's fixed cache budget remains sufficient. Use
-`--profile chat` for the complete long-context configuration. Cache hits require an
+assume the 65K mode's fixed cache budget remains sufficient. Use the long-context
+mode for the complete configuration. Cache hits require an
 unchanged token prefix that is still resident. They reduce repeated prompt work,
 not the cost of generating each new token.
 
-The chat profile reports cached tokens in `usage.prompt_tokens_details.cached_tokens`.
+The long-context mode reports cached tokens in `usage.prompt_tokens_details.cached_tokens`.
 Streaming clients must also request `"stream_options":{"include_usage":true}`
 to receive usage in the stream. Server-side cache counters are available at
 `http://127.0.0.1:18982/metrics`.
@@ -393,27 +449,46 @@ penalties and sampling settings belong in each client's API requests. Report the
 prompt, settings and server logs when diagnosing loops; a sampling workaround is
 not a general fix.
 
-The release preset's model template enables thinking when the client omits that
-setting. The chat profile and our benchmarks disable it. Use `--thinking off` to
+In the 65K mode, the model's template enables thinking when the client omits that
+setting; the long-context mode and our benchmarks disable it. Use `--thinking off` to
 set the server default, or send
 `"chat_template_kwargs":{"enable_thinking":false}` in each request.
 
 ### Images and vision
 
-These presets serve **text only** with `--language-model-only`. They do not accept
-a llama.cpp `mmproj` file. A separate single-image smoke test with an 8K context
-limit used the checkpoint's vision weights and passed color identification and
-subsequent text and tool requests. That configuration needs additional VRAM and
-is not included in these launchers; 200K/220K multimodal use has not been validated.
+Add `--vision` to send images, such as screenshots, UI captures or charts, as OpenAI-style `image_url` content:
+
+```bash
+bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh --vision
+```
+
+The checkpoint's vision encoder then loads next to the language model, and its
+memory comes out of the KV cache: 278,050 tokens instead of 393,216 with the 3-bit
+weights and the 4-bit cache (180,416 with `--kv-cache fp8`), and 120,277 instead of
+174,634 with MXFP4. An image costs about one token per 32 × 32 pixels: a 1920 × 1080
+screenshot is about 2,000 tokens, and larger images are scaled down to at most
+16,384 tokens (4096 × 4096 pixels).
+
+On one R9700, with the 3-bit weights, with MXFP4 and in the `desktop` profile, the model
+read a code editor, a failing pytest run, a web sign-in form and a bar chart correctly,
+and the centre text and corner labels of a 4096 × 4096 image (16,425 prompt tokens,
+11 s to the first token). A 58K-token prompt with a chart answered questions about
+both, eight concurrent requests with an image each completed, DFlash2 stayed active,
+and text answers and decode speed were unchanged.
+
+`--vision` works in the 65K mode, including `--profile desktop`. It is not tested
+with prefix caching yet, so the long-context mode refuses it for now. Video input
+is not tested. An explicit `--kv-cache-memory-bytes` or `--gpu-memory-utilization`
+replaces the vision budget.
 
 ## Faster decode and prefill: 3-bit W3A4 weights (optional)
 
-The 26 September 65K image can serve our own rotated 3-bit weights for the
-decoder projections in place of MXFP4:
+The image can serve our own rotated 3-bit weights for the decoder projections in
+place of MXFP4:
 [EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4](https://huggingface.co/EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4).
 They are an add-on to the same pinned target and DFlash2 drafter, not a
 standalone checkpoint. [Download them](#optional-3-bit-w3a4-weights), keep
-`PAITON_W3ROT_DIR` set, and start the 65K launcher as usual.
+`PAITON_W3ROT_DIR` set, and start the launcher as usual.
 
 **How they work.** The decoder projections use 3-bit integer weights with one
 scale per 128 weights, stored in a block-wise Hadamard-rotated basis and
@@ -425,18 +500,20 @@ gives most of the difference to the KV cache.
 **What you gain.** +19.9% weighted decode, +15.7% to +22.1% aggregate throughput
 at one to eight concurrent requests, and +5.0% to +12.7% prefill with
 correspondingly shorter time to first token (see
-[Current benchmark results](#current-benchmark-results)). The larger KV cache
-holds 3.8 instead of 2.7 concurrent 65K-token requests. Four 61K-token requests
-with 512 output tokens each:
+[Current benchmark results](#current-benchmark-results)). With the FP8 cache, the
+larger KV budget holds 3.8 instead of 2.7 concurrent 65K-token requests; the
+default [4-bit KV cache](#more-context-capacity-4-bit-kv-cache) raises this to
+6.0 by vLLM's count. Four 61K-token requests with 512 output
+tokens each, FP8 cache (26 September measurement):
 
 | Configuration | KV cache | Wall time | Requests decoding together |
 |---|---:|---:|---:|
 | MXFP4 | 174,634 tokens | 105.6 s | 2 |
 | W3A4, same KV budget | 174,634 tokens | 92.9 s | 2 |
-| W3A4, launcher default | 250,578 tokens | **86.2 s** | **4**, at 199 tok/s combined |
+| W3A4, launcher default with `--kv-cache fp8` | 250,578 tokens | **86.2 s** | **4**, at 199 tok/s combined |
 
 At the same KV budget, two 61K-token requests decode at 117 instead of 69 tok/s
-combined. Startup takes about 230 s instead of about 210 s.
+combined. With a warm runtime cache, startup takes about 230 s instead of about 210 s.
 
 **What it costs.** Served model, greedy decoding, thinking off, paired with
 MXFP4 on identical items; Δ in points with a 95% interval:
@@ -454,14 +531,98 @@ from the MXFP4 path, greedy ones included. **For maximum knowledge accuracy, use
 MXFP4** (`--weights mxfp4`, or leave `PAITON_W3ROT_DIR` unset); it keeps this
 release's other improvements.
 
-The 3-bit weights are text-only, tied to the pinned target revision, and served
-only by the 65K image; the 200K image uses MXFP4. They were benchmarked and
-evaluated with the 65K release profile. The launcher's `desktop` and `chat`
-profiles also use them when `PAITON_W3ROT_DIR` is set, but those combinations
-have not been measured. Transformers, stock vLLM and llama.cpp cannot load them.
+The 3-bit weights replace the language model's weights and are tied to the pinned
+target revision; with `--vision`, the vision encoder comes from the target
+checkpoint. They were benchmarked and evaluated in the 65K mode, and the
+long-context mode passed its checks with them ([Long context](#long-context-200k-and-220k)).
+The `desktop` profile also uses them when `PAITON_W3ROT_DIR` is set; that
+combination has not been measured. Transformers, stock vLLM and llama.cpp cannot
+load them.
 The weights are Apache-2.0; the
 [model card](https://huggingface.co/EliovpAI/Qwen3.8-27B-W3Rot-INT3-Paiton-RDNA4)
 lists the calibration data and its attributions.
+
+## More context capacity: 4-bit KV cache
+
+With the [3-bit W3A4 weights](#faster-decode-and-prefill-3-bit-w3a4-weights-optional),
+the 65K mode stores the attention KV cache in 4 bits. It is on by default; launch
+as usual.
+
+**How it works.** Keys and values are stored as 4-bit integers in groups of 32
+values, each group with its own scale and zero point. Keys are Hadamard-rotated
+before quantization, which spreads outlier channels across the group; queries
+get the same rotation, so attention scores are unaffected by it. The denser pages
+are published to vLLM's KV-cache allocator, so the scheduler admits more tokens
+from the same memory; our earlier 4-bit version only reduced the bytes read. The
+16 full-attention layers use this cache. The Gated DeltaNet recurrent state and
+the DFlash2 drafter's cache are unchanged, and the scales take space, so the
+gain is about 1.8× as many attention tokens per byte rather than 2×.
+
+**When it is on.** `--kv-cache auto` (the default) selects the 4-bit cache only
+where it was measured end to end: the 65K mode with the 3-bit weights, up to
+65,536 tokens. Everything else uses the FP8 cache: MXFP4 weights, the
+long-context mode (prefix caching), the `desktop` profile and other contexts.
+`--kv-cache fp8` keeps the FP8 cache and the 26 September budget in the 65K mode.
+`--kv-cache kv4` selects the 4-bit cache without prefix caching up to 200,000
+tokens, beyond what we measured end to end, and stops with an error outside that
+range.
+
+**What you gain.** Launcher defaults with the 3-bit weights, requests with 512
+output tokens each, greedy decoding:
+
+| | 26 Sept image, FP8 KV | 28 Sept image, 4-bit KV |
+|---|---:|---:|
+| KV cache size in vLLM's startup log | 250,578 tokens | 393,216 tokens |
+| Attention tokens with eight requests running¹ | 211,136 | 358,336 (**1.70×**) |
+| Four 61K-token requests, combined decode² | 188 tok/s | **219 tok/s** |
+| Six 61K-token requests | not all at once | all six together, 248 tok/s² |
+| Eight 32K-token requests | not all at once | all eight together, 339 tok/s² |
+
+¹ vLLM's log figure does not subtract the recurrent-state and draft-cache blocks
+that each running request also takes from the same pool.
+² While every request is decoding. This rate varies between sessions (the 26
+September run of the FP8 configuration measured 199 tok/s at four 61K-token
+requests), so compare within this table.
+
+Time to first token is unchanged: prefill from 2K to 64K tokens is within ±0.3%
+of the 26 September image. Single-request decode is unchanged too: the time per
+decoding step is identical, and over 232 sampled requests per image both caches
+decode equally fast.
+
+**VRAM.** The 4-bit cache needs about 0.16 GiB more working memory and runs more
+requests at once, so the launcher gives it 8,859,648,000 instead of 9,381,235,631
+bytes; at idle, 0.44 GiB more VRAM stays free than with the FP8 cache. Under full
+load, peak VRAM was 31.65 to 31.76 GiB (FP8 cache: up to 31.63 GiB), with no
+out-of-memory errors; with either cache, PyTorch keeps freed memory reserved. The
+capacity figures above use this budget.
+
+**What it costs.** Served model with the 3-bit weights, greedy decoding,
+thinking off, paired with the FP8 cache on identical items; Δ in points with a
+95% interval:
+
+| Benchmark | FP8 KV | 4-bit KV | Δ [95% CI] |
+|---|---:|---:|---:|
+| GSM8K 5-shot (1,319) | 95.30 | 96.13 | +0.83 [−0.07, +1.74] |
+| HumanEval pass@1 (164) | 93.90 | 93.90 | 0.00 [−2.93, +2.93] |
+| MMLU-Pro subset, 0-shot (14 × 100) | 59.71 | 61.43 | +1.71 [+0.21, +3.22] |
+| Needle at 61,440 tokens (80) | 100 | 100 | 0 |
+
+We read this as no loss, not as a gain from the 4-bit cache. DFlash2 acceptance
+changes by −1.2% to +1.8%.
+
+**Long sessions.** A new test in our suite plants 11 facts in each of 24
+synthetic coding-agent sessions of 32K and 61K tokens, written in the model's own
+tool-call format: user decisions, values in tool output next to look-alike
+distractors, and the assistant's own conclusions. The model then writes a handoff
+summary, answers direct questions about the facts, and answers them again from
+its summary alone. Over the same 264 facts, the 4-bit cache kept 87.9% of the
+facts in its summaries (FP8: 89.0%), recalled 99.6% directly (100%), answered
+83.7% from its own summary (86.7%), and wrote lazy references such as "see above"
+in 2 sessions (2). All differences are within noise: every 95% interval includes
+zero, and an earlier run of the same 4-bit configuration scored 90.5%, 99.6% and
+85.6%. On the same test, the 3-bit weights showed no measurable
+loss against MXFP4 either (facts kept 89.0 vs 89.4%, answers from the summary
+86.7 vs 84.8%).
 
 ## Faster agentic coding decode: n-gram co-drafting (opt-in)
 
@@ -478,7 +639,7 @@ It is **off by default**. Enable it per launch with `PAITON_NGRAM_CODRAFT=1`; th
 launcher forwards the variable when it is set on the host:
 
 ```bash
-PAITON_NGRAM_CODRAFT=1 bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10-65k.sh --profile chat
+PAITON_NGRAM_CODRAFT=1 bash models/Qwen3.8-MXFP4-DFlash2/run-rocm10.sh --profile chat
 ```
 
 Measured with the published adapter on the 24 September image (MXFP4 weights),
@@ -516,9 +677,20 @@ the small cost on non-copying traffic.
 
 ## Current benchmark results
 
+**28 September image.** The tables below were measured on the 26 September image;
+the 28 September image runs at the same speed. In a BetterBench A/B between the two
+(3-bit weights, the settings below, two runs each), prefill from 2K to 64K was
+within ±0.3% and aggregate throughput at one to eight requests within −2.4% to 0.0%.
+Weighted single-stream decode read 181.8 vs 191.0 tok/s (−4.8%), but that is a
+sampling effect, not a slowdown: BetterBench's fixed seed replays the same 40
+sampled answers in every run, the 4-bit cache sends each answer down a different
+path, and the time per decoding step is identical. Over 232 requests with eight
+seeds per prompt, both images decode equally fast (within 1%). For long-context
+capacity, see [4-bit KV cache](#more-context-capacity-4-bit-kv-cache).
+
 R9700, 300 W; vLLM 0.29 / ROCm 10; 65,536 context; maximum eight sequences; APC off; thinking off; n-gram co-drafting off. Temperature 0.7, top-p 0.95, top-k 20, seed 42. BetterBench 0.6.0 quick. Three arms, each run twice in fresh processes, interleaved: the published 24 September image; this round's runtime with MXFP4 weights; and the 26 September image with the 3-bit W3A4 weights. The tables show the mean of the two runs; changes compare W3A4 with the 24 September release. All arms set `GPU_MAX_HW_QUEUES=1`, so the gains exclude that setting.
 
-**Decode, single stream, tok/s.** The headline of this release.
+**Decode, single stream, tok/s.** The headline of the 26 September release.
 
 | Category | 24 Sept release | 26 Sept, MXFP4 | 26 Sept, W3A4 | Change |
 |---|---:|---:|---:|---:|
@@ -552,7 +724,7 @@ Weighted decode: **153.8 → 156.1 → 184.4 tok/s (+19.9%)**.
 | 32,000 | 3,751 | 3,750 | **3,958** | +5.5% |
 | 64,000 | 3,455 | 3,455 | **3,629** | +5.0% |
 
-**What changed in the image.** The optional [3-bit W3A4 weights](#faster-decode-and-prefill-3-bit-w3a4-weights-optional); a fused Gated DeltaNet speculative-verify kernel, exact against the previous path (the MXFP4 arm returns the same twelve greedy outputs as the 24 September release) and worth +1.5% weighted decode; and `GPU_MAX_HW_QUEUES=1`, which removes a slower decode mode that some fresh server processes on the R9700 started in.
+**What changed in the 26 September image.** The optional [3-bit W3A4 weights](#faster-decode-and-prefill-3-bit-w3a4-weights-optional); a fused Gated DeltaNet speculative-verify kernel, exact against the previous path (the MXFP4 arm returns the same twelve greedy outputs as the 24 September release) and worth +1.5% weighted decode; and `GPU_MAX_HW_QUEUES=1`, which removes a slower decode mode that some fresh server processes on the R9700 started in.
 
 Sampled output content and accepted-token work can differ; these are serving-throughput measurements, not identical-output timing.
 Nominal prefill depths correspond to median actual prompt lengths 1516.5, 5894.5, 11802, 23549.5 and 47016.5.
@@ -572,6 +744,14 @@ legacy release; use the `run-rocm10-*.sh` launchers above for the current images
 
 <details>
 <summary>Earlier releases, APC investigation, benchmarks and reproduction instructions</summary>
+
+## 26 September 2026 release: optional 3-bit W3A4 weights
+
+The 26 September 65K image (`ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1`)
+introduced the optional 3-bit W3A4 weights with the FP8 KV cache. Its throughput tables remain
+[above](#current-benchmark-results) and in [benchmarks/2026-09-26-w3a4](benchmarks/2026-09-26-w3a4/README.md).
+Under three to five concurrent requests it can stop the engine; see the
+[28 September release notes](#release-notes-28-september-2026) for the fix and a workaround.
 
 ## 24 September 2026 release: faster prefill and opt-in n-gram co-drafting
 

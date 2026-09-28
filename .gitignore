@@ -7,5 +7,7 @@ __pycache__/
 .venv/
 build/
 dist/
+
+# Model weights and runtime caches created by the model guides
 model-cache/
 runtime-cache/

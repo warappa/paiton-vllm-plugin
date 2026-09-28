@@ -342,12 +342,50 @@ class Rocm10LauncherTests(unittest.TestCase):
                           'open(os.environ["DOCKER_ARGV_RECORD"],"w").write(json.dumps(sys.argv[1:]))\n')
         python.chmod(0o755)
         options = ['--profile', 'desktop', '--context', '16384', '--name', 'literal $value']
-        for release in ('65k', '200k'):
-            result = subprocess.run(['bash', str(MODEL_DIR / f'run-rocm10-{release}.sh'), *options],
+        # Both wrappers start the current image; the 200K one selects its long-context profile and container
+        # name first, so every option the user passes still overrides them.
+        for script, preset in (('run-rocm10.sh', ['--name', 'paiton-qwen38']), ('run-rocm10-65k.sh', []),
+                               ('run-rocm10-200k.sh', ['--profile', 'chat', '--name', 'paiton-qwen38-200k'])):
+            result = subprocess.run(['bash', str(MODEL_DIR / script), *options],
                                     env=self.environment, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(self.record.read_text()),
-                             [str(SCRIPT), '--release', release, *options])
+                             [str(SCRIPT), '--release', '65k', *preset, *options])
+
+    def test_long_context_selects_the_chat_profile_on_the_current_image(self):
+        image = launcher.IMAGES['65k']
+        w3rot = self.root / 'w3rot directory'
+        w3rot.mkdir()
+        for weights in ('mxfp4', 'w3a4'):
+            if weights == 'w3a4':
+                self.environment['PAITON_W3ROT_DIR'] = str(w3rot)
+            for context in ('200000', '220000'):
+                with self.subTest(weights=weights, context=context):
+                    command = self.command('--context', context)
+                    self.assertIn(image, command)
+                    self.assertIn('RADIANCE_GDN_LAZY=0', command)
+                    # prefix caching is not qualified with the 4-bit cache: FP8 cache, the chat profile's budget
+                    self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=0', 'PAITON_KV4_CAPACITY=0'])
+                    engine = self.engine(command)
+                    self.assertEqual(value(engine, '--max-model-len'), context)
+                    self.assertEqual(json.loads(value(engine, '--speculative-config'))['max_model_len'], int(context))
+                    self.assertEqual(value(engine, '--max-num-seqs'), '1')
+                    self.assertEqual(value(engine, '--max-num-batched-tokens'), '1024')
+                    self.assertEqual(value(engine, '--kv-cache-memory-bytes'), '8589934592')
+                    self.assertEqual(value(engine, '--mamba-cache-mode'), 'align')
+                    self.assertIn('--enable-prefix-caching', engine)
+                    self.assertEqual(json.loads(value(engine, '--default-chat-template-kwargs')),
+                                     {'enable_thinking': False})
+        # up to the 65K preset's own limit, and with an explicit profile, nothing changes
+        engine = self.engine(self.command('--context', '65536'))
+        self.assertEqual(value(engine, '--max-num-seqs'), '8')
+        self.assertIn('--no-enable-prefix-caching', engine)
+        engine = self.engine(self.command('--profile', 'release', '--context', '200000'))
+        self.assertEqual(value(engine, '--max-num-seqs'), '8')
+        self.assertIn('--no-enable-prefix-caching', engine)
+        engine = self.engine(self.command('--profile', 'desktop', '--context', '100000'))
+        self.assertEqual(value(engine, '--kv-cache-memory-bytes'), str(2 * 1024**3))
+        self.assertEqual(value(engine, '--max-model-len'), '100000')
 
     def test_ngram_codraft_forwarded_only_when_set_on_host(self):
         command = self.command()
@@ -378,8 +416,8 @@ class Rocm10LauncherTests(unittest.TestCase):
         self.assertIn(f'{w3rot}:/models/w3rot:ro', command[:image_index])
         self.assertFalse(any(flag in command for flag in flags))
         # The memory the 3-bit weights free goes to the KV cache unless a budget is given,
-        # with the allocator setting that budget was measured with.
-        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV_CACHE_BYTES))
+        # with the allocator setting that budget was measured with (4-bit KV cache budget by default).
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV4_CACHE_BYTES))
         self.assertIn('PYTORCH_ALLOC_CONF=max_split_size_mb:64', command[:image_index])
         command = self.command('--kv-cache-memory-bytes', '7000000000')
         self.assertEqual(value(command, '--kv-cache-memory-bytes'), '7000000000')
@@ -406,6 +444,134 @@ class Rocm10LauncherTests(unittest.TestCase):
         command = self.command('--release', '200k')
         self.assertFalse(any(item.startswith('PAITON_W3_') for item in command))
         self.assertFalse(any(item.endswith(':/models/w3rot:ro') for item in command))
+
+
+    def kv4_flags(self, command, image):
+        index = command.index(image)
+        return [item for item in command[:index] if item.startswith('PAITON_KV4')]
+
+    def test_w3a4_serves_the_capacity_kv4_cache_with_its_budget(self):
+        w3rot = self.root / 'w3rot directory'
+        w3rot.mkdir()
+        self.environment['PAITON_W3ROT_DIR'] = str(w3rot)
+        image = launcher.IMAGES['65k']
+        command = self.command()
+        self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=1', 'PAITON_KV4_CAPACITY=1'])
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV4_CACHE_BYTES))
+        self.assertLess(launcher.W3_KV4_CACHE_BYTES, launcher.W3_KV_CACHE_BYTES)
+        # explicit fp8 keeps the previous release budget and cache
+        command = self.command('--kv-cache', 'fp8')
+        self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=0', 'PAITON_KV4_CAPACITY=0'])
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV_CACHE_BYTES))
+        # a user budget is respected either way
+        command = self.command('--kv-cache-memory-bytes', '7000000000')
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), '7000000000')
+        self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=1', 'PAITON_KV4_CAPACITY=1'])
+
+    def test_kv4_stays_off_where_it_was_not_qualified(self):
+        w3rot = self.root / 'w3rot directory'
+        w3rot.mkdir()
+        image = launcher.IMAGES['65k']
+        # MXFP4 weights (no rotated weights mounted): fp8 KV as before
+        command = self.command()
+        self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=0', 'PAITON_KV4_CAPACITY=0'])
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), '6535819798')
+        self.environment['PAITON_W3ROT_DIR'] = str(w3rot)
+        # prefix caching (and the chat profile that uses it): fp8 KV
+        for options in (('--prefix-caching', 'on'), ('--profile', 'chat')):
+            with self.subTest(options=options):
+                command = self.command(*options)
+                self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=0', 'PAITON_KV4_CAPACITY=0'])
+        # an explicit kv4 request where it is not qualified is refused before Docker runs
+        for options in (('--kv-cache', 'kv4', '--weights', 'mxfp4'), ('--kv-cache', 'kv4', '--prefix-caching', 'on'),
+                        ('--kv-cache', 'kv4', '--release', '200k')):
+            with self.subTest(options=options):
+                self.record.unlink(missing_ok=True)
+                result = self.run_launcher(*options)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('--kv-cache kv4', result.stderr)
+                self.assertFalse(self.record.exists())
+        # the 200k release is not a KV4 image: no KV4 flags at all
+        command = self.command('--release', '200k')
+        self.assertEqual(self.kv4_flags(command, launcher.IMAGES['200k']), [])
+
+
+    def test_kv4_stays_within_its_context_limit(self):
+        w3rot = self.root / 'w3rot directory'
+        w3rot.mkdir()
+        self.environment['PAITON_W3ROT_DIR'] = str(w3rot)
+        image = launcher.IMAGES['65k']
+        on, off = ['PAITON_KV4=1', 'PAITON_KV4_CAPACITY=1'], ['PAITON_KV4=0', 'PAITON_KV4_CAPACITY=0']
+        # automatic selection only in the measured configuration: the 65K preset at up to 65,536 tokens
+        self.assertEqual(self.kv4_flags(self.command('--context', '65536'), image), on)
+        for options in (('--profile', 'release', '--context', '65537'), ('--profile', 'desktop')):
+            with self.subTest(options=options):
+                self.assertEqual(self.kv4_flags(self.command(*options), image), off)
+        command = self.command('--profile', 'release', '--context', str(launcher.KV4_MAX_CONTEXT))
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV_CACHE_BYTES))
+        # an explicit request covers the kernels' range, with that mode's own budget
+        command = self.command('--profile', 'release', '--kv-cache', 'kv4', '--context', str(launcher.KV4_MAX_CONTEXT))
+        self.assertEqual(self.kv4_flags(command, image), on)
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.W3_KV4_CACHE_BYTES))
+        command = self.command('--profile', 'desktop', '--kv-cache', 'kv4')
+        self.assertEqual(self.kv4_flags(command, image), on)
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(2 * 1024**3))
+        self.record.unlink(missing_ok=True)
+        result = self.run_launcher('--profile', 'release', '--kv-cache', 'kv4',
+                                   '--context', str(launcher.KV4_MAX_CONTEXT + 1))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('--kv-cache kv4', result.stderr)
+        self.assertFalse(self.record.exists())
+
+
+    def test_vision_loads_the_encoder_with_a_smaller_kv_budget(self):
+        image = launcher.IMAGES['65k']
+        self.assertIn('--language-model-only', self.engine(self.command()))
+        # MXFP4 weights: image input on, KV budget reduced for the vision encoder, and the allocator setting the
+        # vision budgets were measured with (without it the encoder's startup profile fragments the cache)
+        command = self.command('--vision')
+        self.assertIn('PYTORCH_ALLOC_CONF=max_split_size_mb:64', command[:command.index(image)])
+        engine = self.engine(command)
+        self.assertNotIn('--language-model-only', engine)
+        self.assertEqual(value(engine, '--kv-cache-memory-bytes'), str(launcher.VISION_KV_CACHE_BYTES['mxfp4', 'fp8']))
+        self.assertLess(launcher.VISION_KV_CACHE_BYTES['mxfp4', 'fp8'], 6535819798)
+        # 3-bit weights: the 4-bit KV cache stays the default, the FP8 cache on request, each with its own budget
+        w3rot = self.root / 'w3rot directory'
+        w3rot.mkdir()
+        self.environment['PAITON_W3ROT_DIR'] = str(w3rot)
+        command = self.command('--vision')
+        self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=1', 'PAITON_KV4_CAPACITY=1'])
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.VISION_KV_CACHE_BYTES['w3a4', 'kv4']))
+        self.assertLess(launcher.VISION_KV_CACHE_BYTES['w3a4', 'kv4'], launcher.W3_KV4_CACHE_BYTES)
+        command = self.command('--vision', '--kv-cache', 'fp8')
+        self.assertEqual(self.kv4_flags(command, image), ['PAITON_KV4=0', 'PAITON_KV4_CAPACITY=0'])
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), str(launcher.VISION_KV_CACHE_BYTES['w3a4', 'fp8']))
+        self.assertLess(launcher.VISION_KV_CACHE_BYTES['w3a4', 'fp8'], launcher.W3_KV_CACHE_BYTES)
+        # explicit budgets still win
+        command = self.command('--vision', '--kv-cache-memory-bytes', '3000000000')
+        self.assertEqual(value(command, '--kv-cache-memory-bytes'), '3000000000')
+        engine = self.engine(self.command('--vision', '--gpu-memory-utilization', '0.9'))
+        self.assertNotIn('--kv-cache-memory-bytes', engine)
+        self.assertNotIn('--language-model-only', engine)
+
+    def test_vision_with_the_desktop_profile_keeps_its_budget(self):
+        engine = self.engine(self.command('--profile', 'desktop', '--vision'))
+        self.assertNotIn('--language-model-only', engine)
+        self.assertEqual(value(engine, '--kv-cache-memory-bytes'), str(2 * 1024**3))
+        self.assertEqual(value(engine, '--max-model-len'), '32768')
+
+    def test_vision_is_refused_where_it_was_not_qualified(self):
+        for options, reason in ((('--context', '200000'), 'long-context mode'),
+                                (('--profile', 'chat'), 'long-context mode'),
+                                (('--prefix-caching', 'on'), 'long-context mode'),
+                                (('--release', '200k'), 'not available for the 200k release')):
+            with self.subTest(options=options):
+                self.record.unlink(missing_ok=True)
+                result = self.run_launcher('--vision', *options)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('--vision', result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertFalse(self.record.exists())
 
 
 if __name__ == '__main__':

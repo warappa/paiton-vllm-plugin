@@ -11,7 +11,7 @@ import sys
 
 
 IMAGES = {
-    '65k': 'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-65k-20260926-w3a4-r1@sha256:c4134aba665f6dd3b89354a43be2b5b814f7078db456351647a3f1b106a0da49',
+    '65k': 'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1@sha256:487c97d51e5b4a3fcd0a206e53d842a52dd56a199d8ee3e884f48815093a80d4',
     '200k': 'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-200k-20260918-r2@sha256:32dab97330ea84b86967537d25f91878c30f21ff844f71369508c5a049b89178',
 }
 # Images that carry the native 3-bit (W3A4) runtime. Its flags default on inside
@@ -21,6 +21,28 @@ W3_FLAGS = ('PAITON_W3_DECODE', 'PAITON_W3_PREFILL', 'PAITON_W3_A4')
 # Release KV budget plus 2.65 GiB of the 3.29 GiB the 3-bit weights free: four
 # 61K-token requests fit and peak at the MXFP4 release VRAM (31.39 vs 31.37 GiB).
 W3_KV_CACHE_BYTES = 9381235631
+# With the 4-bit KV cache (capacity mode) the same pool holds 1.8x the attention tokens. The mode needs about 0.16 GiB
+# more working memory (prefill workspace, decode scratch) and admits more concurrent requests, so the pool has 618
+# blocks of 14,336,000 B: 0.44 GiB more free VRAM at idle than the fp8 release budget, for 1.70x its 8-sequence
+# attention capacity (the same from 618 to 632 blocks). Under full load the allocator's cache grows into free memory
+# at any budget: peaks 31.65-31.76 GiB vs the release's 31.63 GiB, without OOM.
+W3_KV4_CACHE_BYTES = 8859648000
+# Images that carry the 4-bit KV cache (dense KV4 pages published to the allocator). It is qualified with the 3-bit
+# weights and without prefix caching; every other configuration keeps the fp8 KV cache.
+KV4_RELEASES = frozenset(('65k',))
+KV4_FLAGS = ('PAITON_KV4', 'PAITON_KV4_CAPACITY')
+# The released 4-bit decode path is qualified up to this context (prompt + generated tokens); without an explicit
+# --kv-cache kv4, the launcher selects it only up to the 65K preset's own context, where it was measured end to end.
+KV4_MAX_CONTEXT = 200000
+KV4_AUTO_MAX_CONTEXT = 65536
+# Image input (--vision) also serves the checkpoint's vision encoder (0.88 GiB), which the release command leaves out
+# with --language-model-only. Its weights, its encoder cache (one 16,384-token image) and its startup profiling come
+# out of the KV budget (the MXFP4 release budget runs out of memory at KV allocation). Each weights / KV cache pair has
+# a budget measured on one R9700 with a 4096 x 4096 image, a ~58K-token prompt plus an image and eight concurrent
+# image requests, then lowered by 0.5 GiB where the peak came within 0.1 GiB of the card (3-bit weights: 437 pool
+# blocks with the 4-bit cache). The startup self-check (a one-time 2.37 GiB allocation) passes with every budget.
+VISION_RELEASES = frozenset(('65k',))
+VISION_KV_CACHE_BYTES = {('mxfp4', 'fp8'): 4500000000, ('w3a4', 'fp8'): 6760000000, ('w3a4', 'kv4'): 6264832000}
 SYS_DRM = Path('/sys/class/drm')
 SYS_KFD = Path('/sys/class/kfd/kfd/topology/nodes')
 
@@ -111,9 +133,10 @@ def parser():
     result.add_argument('--image', help='compatible runtime image override; preserves the selected release settings')
     result.add_argument('--weights', choices=('auto', 'w3a4', 'mxfp4'), default='auto',
                         help='auto: the 3-bit W3A4 weights when PAITON_W3ROT_DIR is set, MXFP4 otherwise')
-    result.add_argument('--profile', choices=('release', 'desktop', 'chat'), default='release',
+    result.add_argument('--profile', choices=('release', 'desktop', 'chat'),
                         help='chat: 200000 context, APC on, thinking off, 8 GiB KV; '
-                             'desktop: 32768 context, 2 GiB KV; both use one request and 1024 prefill chunks')
+                             'desktop: 32768 context, 2 GiB KV; both use one request and 1024 prefill chunks. '
+                             'Default: release, or chat when --context exceeds 65536 on the 65k image')
     result.add_argument('--list-gpus', action='store_true', help='list physical render devices without starting Docker')
     result.add_argument('--context', type=positive_integer, metavar='TOKENS', help='set both target and draft context limits')
     result.add_argument('--max-num-seqs', type=positive_integer, metavar='COUNT', help='maximum concurrent requests (1 to 8)')
@@ -121,6 +144,10 @@ def parser():
                         help='automatic memory budget; implies automatic KV sizing unless explicit bytes are supplied')
     result.add_argument('--kv-cache-memory-bytes', type=cache_bytes, metavar='BYTES|auto',
                         help='fixed KV budget in bytes, or automatic sizing from GPU memory utilization')
+    result.add_argument('--kv-cache', choices=('auto', 'kv4', 'fp8'), default='auto',
+                        help='auto: the 4-bit KV cache with the 3-bit weights (without prefix caching), fp8 otherwise')
+    result.add_argument('--vision', action='store_true',
+                        help='accept image input; the vision encoder takes its memory from the KV cache')
     result.add_argument('--prefix-caching', choices=('on', 'off'),
                         help='experimental prefix reuse with materialized recurrent state; off in both releases')
     result.add_argument('--thinking', choices=('on', 'off'),
@@ -193,8 +220,32 @@ def replace_value(command, flag, value):
     command[command.index(flag) + 1] = str(value)
 
 
+def selected_profile(args):
+    """--profile as given; without one, a context above the 65k preset selects the long-context chat profile."""
+    if args.profile is not None:
+        return args.profile
+    if args.release == '65k' and args.context is not None and args.context > 65536:
+        return 'chat'
+    return 'release'
+
+
 def prefix_caching_enabled(args):
     return args.prefix_caching == 'on' or (args.prefix_caching is None and args.profile == 'chat')
+
+
+def kv_cache_mode(args, weights):
+    """'kv4' or 'fp8'. auto picks kv4 only where it was measured end to end: the 65K release preset with the 3-bit
+    weights. An explicit kv4 request is allowed up to the kernels' context limit and refused outside it."""
+    context = args.context if args.context is not None else 0
+    qualified = (args.release in KV4_RELEASES and weights == 'w3a4' and not prefix_caching_enabled(args)
+                 and context <= KV4_MAX_CONTEXT)
+    if args.kv_cache == 'kv4' and not qualified:
+        raise ValueError('--kv-cache kv4 is qualified only for the 65k release with the 3-bit W3A4 weights, '
+                         f'without prefix caching and up to --context {KV4_MAX_CONTEXT}')
+    if args.kv_cache in ('kv4', 'fp8'):
+        return args.kv_cache
+    measured = qualified and args.profile == 'release' and context <= KV4_AUTO_MAX_CONTEXT
+    return 'kv4' if measured else 'fp8'
 
 
 def engine_command(args, weights='mxfp4'):
@@ -204,6 +255,11 @@ def engine_command(args, weights='mxfp4'):
         raise ValueError('--max-num-seqs must be between 1 and 8 for this release')
     if args.port is not None and args.port > 65535:
         raise ValueError('--port must be between 1 and 65535')
+    if args.vision and args.release not in VISION_RELEASES:
+        raise ValueError(f'--vision is not available for the {args.release} release')
+    if args.vision and prefix_caching_enabled(args):
+        raise ValueError('--vision is not yet qualified in the long-context mode (prefix caching: --context above '
+                         '65536, --profile chat or --prefix-caching on); use it in the 65K mode')
     command = release_command(args.release)
     desktop = args.profile == 'desktop'
     chat = args.profile == 'chat'
@@ -223,8 +279,10 @@ def engine_command(args, weights='mxfp4'):
             cache = 8 * 1024**3
         elif desktop:
             cache = 2 * 1024**3
+        elif args.vision:
+            cache = VISION_KV_CACHE_BYTES[weights, kv_cache_mode(args, weights)]
         elif weights == 'w3a4':
-            cache = W3_KV_CACHE_BYTES
+            cache = W3_KV4_CACHE_BYTES if kv_cache_mode(args, weights) == 'kv4' else W3_KV_CACHE_BYTES
     for flag, value in (('--max-model-len', context), ('--max-num-seqs', sequences),
                         ('--gpu-memory-utilization', budget), ('--port', args.port),
                         ('--max-num-batched-tokens', batched_tokens)):
@@ -245,6 +303,8 @@ def engine_command(args, weights='mxfp4'):
         del command[index:index + 2]
     elif cache is not None:
         replace_value(command, '--kv-cache-memory-bytes', cache)
+    if args.vision:
+        command.remove('--language-model-only')
     if prefix_caching_enabled(args):
         command[command.index('--no-enable-prefix-caching')] = '--enable-prefix-caching'
         replace_value(command, '--mamba-cache-mode', 'align')
@@ -289,6 +349,7 @@ def model_mounts(environment, weights):
 
 
 def docker_command(args, environment):
+    args = argparse.Namespace(**{**vars(args), 'profile': selected_profile(args)})
     name = args.name or f'paiton-qwen38-{args.release}'
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]*', name):
         raise ValueError('--name must be a valid Docker container name')
@@ -314,13 +375,18 @@ def docker_command(args, environment):
             command += ['-e', variable + '=' + environment[variable]]
     if prefix_caching_enabled(args):
         command += ['-e', 'RADIANCE_GDN_LAZY=0']
-    if args.profile == 'chat' or weights == 'w3a4':
-        # The allocator setting the chat profile and the W3A4 KV budget were measured with.
+    if args.profile == 'chat' or weights == 'w3a4' or args.vision:
+        # The allocator setting the chat profile, the W3A4 KV budget and the vision budgets were measured with.
         command += ['-e', 'PYTORCH_ALLOC_CONF=max_split_size_mb:64']
     if weights == 'mxfp4' and args.release in W3_RELEASES:
         # All three flags: the runtime rejects W3A4 prefill without W3 decode.
         for variable in W3_FLAGS:
             command += ['-e', variable + '=0']
+    kv_mode = kv_cache_mode(args, weights)   # validates an explicit --kv-cache kv4 for every release
+    if args.release in KV4_RELEASES:
+        state = '1' if kv_mode == 'kv4' else '0'
+        for variable in KV4_FLAGS:
+            command += ['-e', variable + '=' + state]
     if args.detach:
         command.append('--detach')
     return command + model_mounts(environment, weights) + [image] + engine

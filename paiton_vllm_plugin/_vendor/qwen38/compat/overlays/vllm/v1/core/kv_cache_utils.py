@@ -1132,6 +1132,10 @@ def _get_kv_cache_groups_uniform_type(
     return [KVCacheGroupSpec(list(spec.kv_cache_specs.keys()), spec)]
 
 
+# Paiton: smallest block an attention layer may keep when its page is padded to the pool page.
+_PAITON_MIN_PADDED_BLOCK = 64
+
+
 def unify_kv_cache_spec_page_size(
     kv_cache_spec: dict[str, KVCacheSpec],
 ) -> dict[str, KVCacheSpec]:
@@ -1185,7 +1189,21 @@ def unify_kv_cache_spec_page_size(
             elif isinstance(layer_spec, AttentionSpec) and not isinstance(
                 layer_spec, MLAAttentionSpec
             ):
-                new_spec = replace(layer_spec, page_size_padded=max_page_size)
+                # Paiton: grow the block to the largest multiple of its own block
+                # that still fits the maximum page, then pad only the remainder.
+                # Padding at the original block (e.g. a 16-token fp8 drafter page
+                # next to a packed KV4 target page) would spend a whole page per
+                # 16 tokens and silently collapse the pool's capacity.
+                ratio = max_page_size // layer_page_size
+                grown = replace(layer_spec, block_size=layer_spec.block_size * ratio)
+                new_spec = replace(grown, page_size_padded=max_page_size)
+                if new_spec.block_size < _PAITON_MIN_PADDED_BLOCK:
+                    raise ValueError(
+                        f"Layer {layer_name}: padding its {layer_page_size} B page "
+                        f"to {max_page_size} B leaves a block of only "
+                        f"{new_spec.block_size} tokens; refusing a pool that "
+                        "would waste most of every page."
+                    )
             else:
                 raise NotImplementedError(
                     f"Layer {layer_name}: page size is not divisible by the "
