@@ -46,7 +46,7 @@ def release_command(release):
         '--max-num-batched-tokens', '8192',
          '--kv-cache-dtype', 'fp8',
          #'--backend', 'triton',
-        '--language-model-only',
+        #'--language-model-only',
         '--kv-cache-memory-bytes', str(cache), '--gpu-memory-utilization', '0.98',
         '--no-enable-prefix-caching', 
         '--enable-chunked-prefill',
@@ -60,7 +60,17 @@ def release_command(release):
         
         '--enable-auto-tool-choice',
         '--tool-call-parser', 'qwen3_coder', '--reasoning-parser', 'qwen3',
-        '--override-generation-config', json.dumps({'temperature': 0.7, 'top_p': 0.95, 'top_k': 20}),
+        #'--override-generation-config', json.dumps({'temperature': 0.7, 'top_p': 0.95, 'top_k': 20}),
+        '--override-generation-config', json.dumps(
+            {
+                'temperature': 0.9,
+                'min_p': 0.05,
+                'top_p': 0.95, 
+                'top_k': 20, 
+                'presence_penalty': 0.0, 
+                'repetition_penalty':1.0,
+                'thinking_budget': 60000
+            }),
         '--seed', '42',
     ]
 
