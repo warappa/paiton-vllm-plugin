@@ -91,7 +91,7 @@ def release_command(release):
                 'top_k': 20, 
                 'presence_penalty': 0.0, 
                 'repetition_penalty':1.0,
-                'thinking_budget': 60000
+                #'thinking_budget': 60000
             }),
         '--seed', '42',
     ]
