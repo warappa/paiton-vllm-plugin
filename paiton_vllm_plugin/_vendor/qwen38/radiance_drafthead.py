@@ -78,6 +78,9 @@ BITS = 2
 # request draws from exactly R tokens. Measured on Qwen3.8-27B + DFlash2-FP8 at ctx 0, R=32:
 # acc/draft 1.904 -> 1.804 against the bf16 head, i.e. 2R is too tight a pool for K=16.
 RERANK = int(os.environ.get("RADIANCE_DRAFT_RERANK", "32"))
+# LogitsProcessors whose lm_head is only shared in from the target AFTER load_weights (DFlash2):
+# their head is never quantised at load time, whatever the allocated memory happens to hold.
+SHARED_HEAD_LP_ATTRS = ("candidate_logits_processor",)
 KCAND = 8          # candidates emitted per block; R caps the final count, K feeds it
 # Launch geometry, per M band. The head changes regime across the batch sizes one serve produces:
 # at M=16 it is memory-bound (427 GB/s, 68% of the DRAM roofline on its 152 MiB of int2) and at
@@ -322,10 +325,15 @@ def _quantize_draft_head(mtp, lp_attr="logits_processor"):
         return f"unsupported draft-head weight {tuple(w.shape)} {w.dtype}"
     lp._radiance_topk_only = lp_attr == "candidate_logits_processor"
     # A drafter whose checkpoint carries no lm_head (DFlash2) gets the target's tensor shared in
-    # AFTER load_weights returns, so at this point the parameter is still allocated-but-empty.
-    # Quantising that yields an all-zero head, and the failure is silent and total: the serve comes
-    # up, text stays coherent because the TARGET is fine, and only acceptance collapses to ~1.0 --
-    # which reads as a plausible accuracy verdict on the quantisation. Defer instead.
+    # AFTER load_weights returns, so at this point the parameter is allocated but uninitialised.
+    # Quantising it is silent and total: the serve comes up, text stays coherent because the TARGET
+    # is fine, and only acceptance collapses to ~1.0. Whether that memory reads as zero depends on
+    # what the allocator hands out (recycled pages were non-zero on a user's system), so the DFlash2
+    # path never decides by content: it always quantises on first use, from the head it is actually
+    # called with. Other drafters keep the content check as a safety net.
+    if lp_attr in SHARED_HEAD_LP_ATTRS:
+        lp._apply_head = types.MethodType(_apply_head_lazy, lp)
+        return "lm_head shared in after load_weights (DFlash2); quantising on first use"
     if _head_is_empty(rows, rsc):
         lp._apply_head = types.MethodType(_apply_head_lazy, lp)
         return "lm_head empty at load_weights (shared in later); quantising on first use"
@@ -427,7 +435,8 @@ def install():
         ("vllm.model_executor.models.qwen3_next_mtp", "Qwen3NextMTP", "logits_processor"),
         # DFlash2 reaches the head through get_top_k_tokens, which calls _apply_head like
         # everything else. Its lm_head is not in the drafter checkpoint -- it is shared in from
-        # the target after load_weights -- so this one always takes the lazy path.
+        # the target after load_weights -- so this one always takes the lazy path (enforced in
+        # _quantize_draft_head, not inferred from the tensor's contents).
         ("vllm.model_executor.models.qwen3_dflash2", "DFlash2Qwen3ForCausalLM",
          "candidate_logits_processor"),
     ):

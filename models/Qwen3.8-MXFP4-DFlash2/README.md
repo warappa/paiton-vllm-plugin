@@ -64,15 +64,26 @@ Without options you get the 65K text mode, the configuration we benchmark. Long 
 
 Both modes work with the 3-bit weights (faster, recommended) or with the MXFP4 checkpoint alone; see
 [Model weights](#model-weights-and-existing-downloads). The image is
-`ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1`; the launcher pins it by digest, and no registry
+`ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260929-r2`; the launcher pins it by digest, and no registry
 login is required.
 
-### Release notes: 28 September 2026
+### Release notes: 28 September 2026 (image r2 of 29 September)
 
-The image `ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1`
-(`sha256:487c97d51e5b4a3fcd0a206e53d842a52dd56a199d8ee3e884f48815093a80d4`) is the 26 September 65K image with the changes below. Weights, drafter and the
+The image `ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260929-r2`
+(`sha256:1195f31329966b3dc4e8e2d17327d339827b3d2b09165f9969b053a6fc2db045`) is the 26 September 65K image with the changes below. Weights, drafter and the
 other serving settings are unchanged. Update this repository to get the launcher that selects it.
 
+- **Fixed in r2 (29 September): DFlash2 draft head built from an uninitialised tensor.** The
+  drafter has no `lm_head` of its own; the target's is shared in after the drafter's weights
+  load. The int2 draft head decided at load time whether that tensor was still empty and, if
+  the memory it got happened to hold old data, quantised garbage. Text stayed correct (the
+  target is untouched), but DFlash2 then accepted 0% of its draft tokens and decode ran at
+  about a fifth of the published speed. Our test machines always received zeroed memory and
+  never showed it; a user on Unraid did, and reported it with the diagnosis. The draft head is
+  now always built on first use from the real head. The 20, 24, 26 and 28 September (r1)
+  images all carry the affected file; on them, run the container with
+  `-e RADIANCE_FAST_DRAFT=0` (the stock bf16 draft head, about 10% slower decode than the int2
+  head) or update.
 - **New: one image for both modes.** `run-rocm10.sh` starts the 65K mode. A `--context` above 65,536, for
   example `--context 200000`, starts the long-context mode on the same image: one request, prefix caching
   and an 8 GiB FP8 KV cache (the settings of the earlier 200K `chat` profile). `run-rocm10-65k.sh` and
@@ -222,7 +233,7 @@ docker run --rm --name paiton-qwen38-65k-cached --network host \
   -e PAITON_W3_DECODE=0 -e PAITON_W3_PREFILL=0 -e PAITON_W3_A4=0 \
   -e PAITON_KV4=0 -e PAITON_KV4_CAPACITY=0 \
   -e ROCR_VISIBLE_DEVICES -e HIP_VISIBLE_DEVICES -e CUDA_VISIBLE_DEVICES \
-  ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1@sha256:487c97d51e5b4a3fcd0a206e53d842a52dd56a199d8ee3e884f48815093a80d4 \
+  ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260929-r2@sha256:1195f31329966b3dc4e8e2d17327d339827b3d2b09165f9969b053a6fc2db045 \
   serve /hf-hub/models--unsloth--Qwen3.8-27B-NVFP4/snapshots/f0b7c9e722f5565102fff8481c99e4d86ae099c7 \
   --tokenizer /hf-hub/models--unsloth--Qwen3.8-27B-NVFP4/snapshots/f0b7c9e722f5565102fff8481c99e4d86ae099c7 \
   --served-model-name Qwen3.8 \

@@ -307,8 +307,8 @@
       "sha256": "6233a2609530f5a92fbcaafa54a2d5ade0134f4620c48139d27026426d5a2c1d"
     },
     "radiance_drafthead.py": {
-      "size_bytes": 25066,
-      "sha256": "3b5122242a2320f93b665786f735d0d7546ec7a8ed7d79e9a671500745e870d1"
+      "size_bytes": 25781,
+      "sha256": "46a56931148a13b1cb5e8c8816f0309821eab3c5e5df93b712a7384552bf36d2"
     },
     "radiance_gdn.py": {
       "size_bytes": 37271,
