@@ -41,7 +41,8 @@ KV4_AUTO_MAX_CONTEXT = 65536
 # a budget measured on one R9700 with a 4096 x 4096 image, a ~58K-token prompt plus an image and eight concurrent
 # image requests, then lowered by 0.5 GiB where the peak came within 0.1 GiB of the card (3-bit weights: 437 pool
 # blocks with the 4-bit cache). The startup self-check (a one-time 2.37 GiB allocation) passes with every budget.
-VISION_RELEASES = frozenset(('65k',))
+#VISION_RELEASES = frozenset(('65k',))
+VISION_RELEASES = frozenset(('65k','200k'))
 VISION_KV_CACHE_BYTES = {('mxfp4', 'fp8'): 4500000000, ('w3a4', 'fp8'): 6760000000, ('w3a4', 'kv4'): 6264832000}
 SYS_DRM = Path('/sys/class/drm')
 SYS_KFD = Path('/sys/class/kfd/kfd/topology/nodes')
@@ -68,7 +69,7 @@ def release_command(release):
         '--max-num-batched-tokens', '8192',
          '--kv-cache-dtype', 'fp8',
          #'--backend', 'triton',
-        #'--language-model-only',
+        '--language-model-only',
         '--kv-cache-memory-bytes', str(cache), '--gpu-memory-utilization', '0.98',
         '--no-enable-prefix-caching', 
         '--enable-chunked-prefill',
@@ -85,7 +86,7 @@ def release_command(release):
         #'--override-generation-config', json.dumps({'temperature': 0.7, 'top_p': 0.95, 'top_k': 20}),
         '--override-generation-config', json.dumps(
             {
-                'temperature': 0.9,
+                'temperature': 1.0,
                 'min_p': 0.05,
                 'top_p': 0.95, 
                 'top_k': 20, 
@@ -257,9 +258,9 @@ def engine_command(args, weights='mxfp4'):
         raise ValueError('--port must be between 1 and 65535')
     if args.vision and args.release not in VISION_RELEASES:
         raise ValueError(f'--vision is not available for the {args.release} release')
-    if args.vision and prefix_caching_enabled(args):
-        raise ValueError('--vision is not yet qualified in the long-context mode (prefix caching: --context above '
-                         '65536, --profile chat or --prefix-caching on); use it in the 65K mode')
+    #if args.vision and prefix_caching_enabled(args):
+    #    raise ValueError('--vision is not yet qualified in the long-context mode (prefix caching: --context above '
+    #                     '65536, --profile chat or --prefix-caching on); use it in the 65K mode')
     command = release_command(args.release)
     desktop = args.profile == 'desktop'
     chat = args.profile == 'chat'
