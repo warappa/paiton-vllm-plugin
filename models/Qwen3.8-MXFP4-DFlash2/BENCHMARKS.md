@@ -1,5 +1,10 @@
 # Qwen3.8 MXFP4: Paiton on regular vLLM
 
+> **New, 1 October 2026:** the 262K long-context mode on the 3-bit weights, measured with the full 20-pass
+> BetterBench run at the 262,144 setting: 174.3 tok/s weighted decode, 29.3 ms update p99, 85 ms TTFT p50,
+> 458.9 tok/s at eight concurrent requests, 3,549 tok/s prefill at 64K, 2,395 tok/s at 184K input tokens.
+> [Results](benchmarks/2026-10-01-262k/README.md).
+
 > **New comparison, 16 September 2026:** [BetterBench 0.6.0 against current
 > GGZ14 on one R9700](benchmarks/2026-09-16-betterbench/README.md), including
 > charts, all four runs, sanitized raw data and reproduction commands.

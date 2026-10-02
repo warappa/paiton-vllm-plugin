@@ -6,8 +6,8 @@ bundle. Neither the private compiler nor a repository checkout is needed.
 
 ## Start serving
 
-Choose a [named preset](../README.md#native-serving-presets) and activate its
-qualified existing vLLM environment. For MiniCPM5:
+Use `paiton models` to list named presets and their required environments,
+then activate the [matching vLLM environment](#qualified-combinations). For MiniCPM5:
 
 ```bash
 python -m pip install https://github.com/Eliovp-BV/paiton-vllm-plugin/releases/download/v0.3.4/paiton_vllm_plugin-0.3.4-py3-none-any.whl

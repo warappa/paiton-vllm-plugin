@@ -1138,6 +1138,7 @@ _PAITON_MIN_PADDED_BLOCK = 64
 
 def unify_kv_cache_spec_page_size(
     kv_cache_spec: dict[str, KVCacheSpec],
+    align_padded_blocks: bool = False,
 ) -> dict[str, KVCacheSpec]:
     """
     Unify the page size of the given KVCacheSpec. If the page size of all layers
@@ -1156,6 +1157,11 @@ def unify_kv_cache_spec_page_size(
 
     Args:
         kv_cache_spec: The KVCacheSpec of each attention layer in the model
+        align_padded_blocks: Paiton (prefix caching): grow a padded attention
+            layer only to the largest block that divides the reference
+            attention block (the largest block among the attention layers
+            that already have the maximum page), so the lcm of the group block
+            sizes, which is the prefix-cache hit alignment, stays that block.
 
     Returns:
         The updated KVCacheSpec with the same page_size_bytes.
@@ -1166,6 +1172,20 @@ def unify_kv_cache_spec_page_size(
         return kv_cache_spec
 
     max_page_size = max(page_sizes)
+    # Paiton: a 16-token drafter page grown to fill a 1,600-token KV4 target page
+    # becomes an 864-token block; lcm(1600, 864) = 43,200 tokens is then the only
+    # cache-hit granularity. With prefix caching the padded block must divide the
+    # target block instead (800 there; an exact page ratio is never affected).
+    ref_block = None
+    if align_padded_blocks:
+        ref_blocks = [
+            spec.block_size
+            for spec in kv_cache_spec.values()
+            if spec.page_size_bytes == max_page_size
+            and isinstance(spec, AttentionSpec)
+            and not isinstance(spec, MLAAttentionSpec)
+        ]
+        ref_block = max(ref_blocks) if ref_blocks else None
     new_kv_cache_spec = {}
     for layer_name, layer_spec in kv_cache_spec.items():
         if layer_spec.page_size_bytes == max_page_size:
@@ -1195,6 +1215,20 @@ def unify_kv_cache_spec_page_size(
                 # next to a packed KV4 target page) would spend a whole page per
                 # 16 tokens and silently collapse the pool's capacity.
                 ratio = max_page_size // layer_page_size
+                if ref_block is not None:
+                    aligned = next(
+                        (
+                            r
+                            for r in range(ratio, 0, -1)
+                            if ref_block % (layer_spec.block_size * r) == 0
+                        ),
+                        None,
+                    )
+                    if (
+                        aligned is not None
+                        and layer_spec.block_size * aligned >= _PAITON_MIN_PADDED_BLOCK
+                    ):
+                        ratio = aligned
                 grown = replace(layer_spec, block_size=layer_spec.block_size * ratio)
                 new_spec = replace(grown, page_size_padded=max_page_size)
                 if new_spec.block_size < _PAITON_MIN_PADDED_BLOCK:
@@ -2032,7 +2066,10 @@ def get_kv_cache_groups(
     # Prefer preserving each layer's cache semantics. If physical pages cannot
     # be unified, try a supported allocation-only fallback before failing.
     try:
-        filtered_spec = unify_kv_cache_spec_page_size(filtered_spec)
+        filtered_spec = unify_kv_cache_spec_page_size(
+            filtered_spec,
+            align_padded_blocks=bool(vllm_config.cache_config.enable_prefix_caching),
+        )
     except NotImplementedError:
         fallback_groups = _try_get_full_allocation_fallback_groups(kv_cache_spec)
         if fallback_groups is None:

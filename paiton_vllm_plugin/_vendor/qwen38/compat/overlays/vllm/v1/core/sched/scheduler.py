@@ -71,6 +71,24 @@ from vllm.v1.utils import record_function_or_nullcontext
 logger = init_logger(__name__)
 
 
+
+def _paiton_mamba_align_block_size(kv_cache_groups, fallback: int) -> int:
+    """Paiton: the block on which align-mode prefill chunks must end.
+
+    Mamba (GDN) state slot p holds the state after exactly (p + 1) * block tokens
+    of its own group's block. cache_config.block_size is the smallest group block,
+    which is smaller than the Mamba block when a padded draft-model group has a
+    smaller block (KV4 long mode: 800-token drafter window next to 1,600-token
+    target / GDN blocks); splitting on it would write states mid-slot. With one
+    Mamba block size, align on it; otherwise keep the fallback.
+    """
+    sizes = {
+        group.kv_cache_spec.block_size
+        for group in kv_cache_groups
+        if isinstance(group.kv_cache_spec, MambaSpec)
+    }
+    return sizes.pop() if len(sizes) == 1 else fallback
+
 class Scheduler(SchedulerInterface):
     def __init__(
         self,
@@ -326,6 +344,9 @@ class Scheduler(SchedulerInterface):
         self.need_mamba_block_aligned_split = (
             self.has_mamba_layers and self.cache_config.mamba_cache_mode == "align"
         )
+        self.mamba_align_block_size = _paiton_mamba_align_block_size(
+            kv_cache_config.kv_cache_groups, self.cache_config.block_size
+        )
         self.mamba_has_prefill_checkpoint_blocks = (
             self.has_mamba_layers
             # TODO: support spec decoding
@@ -409,7 +430,7 @@ class Scheduler(SchedulerInterface):
         if start >= prefill_end:
             return num_new_tokens
 
-        block_size = self.cache_config.block_size
+        block_size = self.mamba_align_block_size
         # The last block-aligned position whose state can be cached. With
         # Eagle, FullAttn prunes the last matching block, so back off one
         # block to avoid a Mamba cache miss.

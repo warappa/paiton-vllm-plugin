@@ -4,6 +4,11 @@
   "tensor_payload_bytes": 9313781512,
   "files": [
     {
+      "file": "config.json",
+      "bytes": 493,
+      "sha256": "87285ef03222fbd2114213226afcb2afb885eb36b4c71d362c765ceac9d8ab0b"
+    },
+    {
       "file": "processor/added_tokens.json",
       "bytes": 707,
       "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"
@@ -325,6 +330,6 @@
     }
   ],
   "repository": "EliovpAI/Qwen_Image-2.1-Uncensored-MXFP4-Paiton",
-  "revision": "f5b159e19d8feba47ca37749066a67276504343f",
-  "download_bytes": 9330308913
+  "revision": "08880cf7e9a96109e5ca092689ae2107bcfec5cc",
+  "download_bytes": 9330309406
 }

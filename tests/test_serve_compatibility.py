@@ -39,7 +39,7 @@ def test_every_documented_native_preset_has_its_exact_package_and_model_guide():
     assert set(guides) == set(presets())
     for name, (package, profile) in presets().items():
         guide = (ROOT / "models" / guides[name] / "README.md").read_text()
-        assert "paiton serve " + name in main
+        assert f"](models/{guides[name]}/README.md)" in main
         assert "paiton serve " + name in guide
         assert package["id"] in guide
         assert package["model"]["revision"] in guide
@@ -68,6 +68,7 @@ def test_launch_guides_have_no_missing_local_link_targets():
         ROOT / "README.md",
         ROOT / "docs/NATIVE_EXECUTION.md",
         ROOT / "docs/NATIVE_PACKAGING.md",
+        ROOT / "models/Qwen3.8-MXFP4-DFlash2/REFERENCE.md",
         *sorted((ROOT / "models").glob("*/README.md")),
     ]
     for path in paths:

@@ -21,6 +21,19 @@ W3_FLAGS = ('PAITON_W3_DECODE', 'PAITON_W3_PREFILL', 'PAITON_W3_A4')
 # Release KV budget plus 2.65 GiB of the 3.29 GiB the 3-bit weights free: four
 # 61K-token requests fit and peak at the MXFP4 release VRAM (31.39 vs 31.37 GiB).
 W3_KV_CACHE_BYTES = 9381235631
+# Long-context mode with the 3-bit weights (fp8 cache, prefix caching): eight sequences, the release prefill budget
+# and graph set, and a KV budget sized for the 262,144-token model limit plus short concurrent requests.
+# Measured 1 Oct 2026 (qwen38-262k-20261001/runs/probe-1, 262,144 context, 8 sequences, 4096 budget): 281,665 fp8
+# tokens, startup zero-check OK, 1.29 GiB idle headroom; 10.95 GB (302,381 tokens) left only 0.59 GiB and 11.6 GB
+# (320,309) 0.14 GiB, so the smaller budget keeps the margin for a full-context request plus short ones.
+W3_LONG_KV_CACHE_BYTES = 10200000000
+# MXFP4 keeps the one-request chat profile: its 8 GiB fp8 cache holds 231,067 tokens, so 262,144 cannot start.
+MXFP4_LONG_MAX_CONTEXT = 220000
+# Vision in the long-context mode (3-bit weights): the 0.88 GiB vision encoder comes out of the KV budget. Measured
+# 1 Oct 2026 (qwen38-262k-20261001/runs/vision-probe): 253,560 cache tokens with the encoder loaded, zero-check OK,
+# 1.08 GiB idle headroom; the largest --context is that capacity minus 8,192 tokens, rounded down to thousands.
+W3_LONG_VISION_KV_CACHE_BYTES = W3_LONG_KV_CACHE_BYTES - 944000000
+W3_LONG_VISION_MAX_CONTEXT = 245000
 # With the 4-bit KV cache (capacity mode) the same pool holds 1.8x the attention tokens. The mode needs about 0.16 GiB
 # more working memory (prefill workspace, decode scratch) and admits more concurrent requests, so the pool has 618
 # blocks of 14,336,000 B: 0.44 GiB more free VRAM at idle than the fp8 release budget, for 1.70x its 8-sequence
@@ -28,13 +41,37 @@ W3_KV_CACHE_BYTES = 9381235631
 # at any budget: peaks 31.65-31.76 GiB vs the release's 31.63 GiB, without OOM.
 W3_KV4_CACHE_BYTES = 8859648000
 # Images that carry the 4-bit KV cache (dense KV4 pages published to the allocator). It is qualified with the 3-bit
-# weights and without prefix caching; every other configuration keeps the fp8 KV cache.
+# weights: in the 65K preset (without prefix caching) and, on request, in the long-context mode (prefix caching);
+# every other configuration keeps the fp8 KV cache.
 KV4_RELEASES = frozenset(('65k',))
 KV4_FLAGS = ('PAITON_KV4', 'PAITON_KV4_CAPACITY')
-# The released 4-bit decode path is qualified up to this context (prompt + generated tokens); without an explicit
-# --kv-cache kv4, the launcher selects it only up to the 65K preset's own context, where it was measured end to end.
-KV4_MAX_CONTEXT = 200000
+# The 4-bit decode path is qualified up to this context (prompt + generated tokens): the model's native 262,144 tokens
+# with KV4 bundle kv4-v5. The 28 and 29 September images carry bundle kv4-v4, whose decode stops at 200,000 and whose
+# adapter predates the prefix-caching check: they keep that limit and stay out of the long-context mode. Without an
+# explicit --kv-cache kv4, the launcher selects the 4-bit cache only in the 65K preset, where it was measured end to end.
+KV4_MAX_CONTEXT = 262144
+KV4_V4_MAX_CONTEXT = 200000
+KV4_V4_IMAGES = frozenset((
+    IMAGES['65k'],
+    'ghcr.io/eliovp/paiton-vllm-plugin:qwen38-rocm10-vllm029-20260928-r1@sha256:487c97d51e5b4a3fcd0a206e53d842a52dd56a199d8ee3e884f48815093a80d4',
+))
 KV4_AUTO_MAX_CONTEXT = 65536
+# Long-context mode with the 4-bit cache (3-bit weights, prefix caching, bundle kv4-v5): the fp8 mode's budget less
+# the 4-bit mode's prefill workspace (one fp8 page per 16 tokens of the context, 512 MiB at 262,144), rounded down to
+# whole pool blocks of 14,336,000 B. Measured 2 Oct 2026 (qwen38-kv4-longmode-20261001/runs/probe-kv4, val-kv4,
+# val-kv4b; 262,144 context, 8 sequences): 451,879 KV4 tokens (1.60x the fp8 mode), startup zero-check OK, 1.03 GiB
+# idle headroom once the workspace exists (fp8: 1.29 GiB); 700 blocks (469,311 tokens) would leave 0.91 GiB. Cached
+# repeats need the compat overlays that keep prefix-cache hits on the 1,600-token grid (cached 258K repeat: 256,000
+# tokens; without them 172,800).
+W3_LONG_KV4_CACHE_BYTES = 9662464000
+# The 3-bit long-context mode caps PyTorch's caching allocator at 95 % of the card. Uncapped, the allocator returns
+# memory only after a failed allocation and climbs to the VRAM edge during long prefills; the KFD admits allocations up
+# to ~31.79 GiB per process although they no longer fit, and the process's buffers are then evicted into system memory
+# (2 Oct 2026, 4-bit long mode, two ~199K documents: evict/restore loops, then the KV pool in GTT and the 16 GB host out
+# of memory). 95 % leaves ~1 GiB for memory outside PyTorch (runtime, code objects, scratch) plus ~0.5 GiB headroom;
+# hipMemGetInfo is no guide (it reported 327 MiB free with ~1.6 GiB of the card unused). Not yet measured with --vision
+# or the MXFP4 long mode, which keep the previous setting.
+W3_LONG_MEMORY_FRACTION = 0.95
 # Image input (--vision) also serves the checkpoint's vision encoder (0.88 GiB), which the release command leaves out
 # with --language-model-only. Its weights, its encoder cache (one 16,384-token image) and its startup profiling come
 # out of the KV budget (the MXFP4 release budget runs out of memory at KV allocation). Each weights / KV cache pair has
@@ -135,18 +172,22 @@ def parser():
     result.add_argument('--weights', choices=('auto', 'w3a4', 'mxfp4'), default='auto',
                         help='auto: the 3-bit W3A4 weights when PAITON_W3ROT_DIR is set, MXFP4 otherwise')
     result.add_argument('--profile', choices=('release', 'desktop', 'chat'),
-                        help='chat: 200000 context, APC on, thinking off, 8 GiB KV; '
-                             'desktop: 32768 context, 2 GiB KV; both use one request and 1024 prefill chunks. '
+                        help='chat: long-context mode (prefix caching, thinking off). 3-bit weights: up to 262144 '
+                             'context, 8 requests, 4096-token prefill budget, measured fp8 KV budget; MXFP4: 200000 '
+                             'context (tested to 220000), one request, 1024 prefill chunks, 8 GiB KV. '
+                             'desktop: 32768 context, 2 GiB KV, one request, 1024 prefill chunks. '
                              'Default: release, or chat when --context exceeds 65536 on the 65k image')
     result.add_argument('--list-gpus', action='store_true', help='list physical render devices without starting Docker')
     result.add_argument('--context', type=positive_integer, metavar='TOKENS', help='set both target and draft context limits')
-    result.add_argument('--max-num-seqs', type=positive_integer, metavar='COUNT', help='maximum concurrent requests (1 to 8)')
+    result.add_argument('--max-num-seqs', type=positive_integer, metavar='COUNT', help='maximum concurrent requests (1 to 8; the long-context mode defaults to 8 with the 3-bit weights, 1 with MXFP4)')
     result.add_argument('--gpu-memory-utilization', type=utilization, metavar='FRACTION',
                         help='automatic memory budget; implies automatic KV sizing unless explicit bytes are supplied')
     result.add_argument('--kv-cache-memory-bytes', type=cache_bytes, metavar='BYTES|auto',
                         help='fixed KV budget in bytes, or automatic sizing from GPU memory utilization')
     result.add_argument('--kv-cache', choices=('auto', 'kv4', 'fp8'), default='auto',
-                        help='auto: the 4-bit KV cache with the 3-bit weights (without prefix caching), fp8 otherwise')
+                        help='auto: the 4-bit KV cache with the 3-bit weights in the 65K preset, fp8 otherwise. '
+                             'kv4 also serves the 3-bit long-context mode (prefix caching) on an image with KV4 '
+                             'bundle kv4-v5')
     result.add_argument('--vision', action='store_true',
                         help='accept image input; the vision encoder takes its memory from the KV cache')
     result.add_argument('--prefix-caching', choices=('on', 'off'),
@@ -154,6 +195,10 @@ def parser():
     result.add_argument('--thinking', choices=('on', 'off'),
                         help='server default for enable_thinking; individual requests may override it')
     result.add_argument('--max-num-batched-tokens', type=positive_integer, metavar='TOKENS')
+    result.add_argument('--long-prefill-threshold', type=positive_integer, metavar='TOKENS',
+                        help='cap the prefill tokens a long prompt takes per step so short requests answer within '
+                             'seconds while it is processed (measured: 3072 or 2048 cost the long prompt about 16%% '
+                             'more time to first token); off by default')
     result.add_argument('--port', type=positive_integer, help='localhost API port (default: 18982)')
     result.add_argument('--name', help='Docker container name')
     result.add_argument('--detach', action='store_true', help='run Docker in the background')
@@ -234,18 +279,40 @@ def prefix_caching_enabled(args):
     return args.prefix_caching == 'on' or (args.prefix_caching is None and args.profile == 'chat')
 
 
+def kv4_refusal(args, weights):
+    """Why the 4-bit KV cache cannot be served in this configuration, or None where it is qualified: the 3-bit weights
+    on the 65k release, without prefix caching up to the image's decode limit, or the long-context mode (prefix
+    caching, no --vision) on an image with bundle kv4-v5."""
+    image = args.image or IMAGES[args.release]
+    if args.release not in KV4_RELEASES or weights != 'w3a4':
+        return 'the 4-bit KV cache needs the 65k release with the 3-bit W3A4 weights'
+    if prefix_caching_enabled(args):
+        if args.profile != 'chat':
+            return ('with prefix caching the 4-bit KV cache is qualified only in the long-context mode '
+                    '(--context above 65536)')
+        if image in KV4_V4_IMAGES:
+            return ('the long-context mode needs an image with KV4 bundle kv4-v5; this image carries kv4-v4 '
+                    f'(decode up to {KV4_V4_MAX_CONTEXT} tokens, no prefix-caching check)')
+        if args.vision:
+            return 'the 4-bit KV cache is not qualified with --vision in the long-context mode'
+        return None
+    limit = KV4_V4_MAX_CONTEXT if image in KV4_V4_IMAGES else KV4_MAX_CONTEXT
+    if args.context is not None and args.context > limit:
+        return f'the 4-bit decode path of this image is qualified up to --context {limit}'
+    return None
+
+
 def kv_cache_mode(args, weights):
     """'kv4' or 'fp8'. auto picks kv4 only where it was measured end to end: the 65K release preset with the 3-bit
-    weights. An explicit kv4 request is allowed up to the kernels' context limit and refused outside it."""
-    context = args.context if args.context is not None else 0
-    qualified = (args.release in KV4_RELEASES and weights == 'w3a4' and not prefix_caching_enabled(args)
-                 and context <= KV4_MAX_CONTEXT)
-    if args.kv_cache == 'kv4' and not qualified:
-        raise ValueError('--kv-cache kv4 is qualified only for the 65k release with the 3-bit W3A4 weights, '
-                         f'without prefix caching and up to --context {KV4_MAX_CONTEXT}')
+    weights. An explicit kv4 request is allowed wherever kv4_refusal finds it qualified and refused elsewhere."""
+    refusal = kv4_refusal(args, weights)
+    if args.kv_cache == 'kv4' and refusal:
+        raise ValueError(f'--kv-cache kv4: {refusal}')
     if args.kv_cache in ('kv4', 'fp8'):
         return args.kv_cache
-    measured = qualified and args.profile == 'release' and context <= KV4_AUTO_MAX_CONTEXT
+    context = args.context if args.context is not None else 0
+    measured = (refusal is None and args.profile == 'release' and not prefix_caching_enabled(args)
+                and context <= KV4_AUTO_MAX_CONTEXT)
     return 'kv4' if measured else 'fp8'
 
 
@@ -256,17 +323,26 @@ def engine_command(args, weights='mxfp4'):
         raise ValueError('--max-num-seqs must be between 1 and 8 for this release')
     if args.port is not None and args.port > 65535:
         raise ValueError('--port must be between 1 and 65535')
-    if args.vision and args.release not in VISION_RELEASES:
-        raise ValueError(f'--vision is not available for the {args.release} release')
-    #if args.vision and prefix_caching_enabled(args):
-    #    raise ValueError('--vision is not yet qualified in the long-context mode (prefix caching: --context above '
-    #                     '65536, --profile chat or --prefix-caching on); use it in the 65K mode')
     command = release_command(args.release)
     desktop = args.profile == 'desktop'
     chat = args.profile == 'chat'
-    compact_graphs = desktop or chat
+    long_w3 = chat and weights == 'w3a4'
+    compact_graphs = desktop or (chat and not long_w3)
     default_context = 200000 if chat else (32768 if desktop else None)
     context = args.context if args.context is not None else default_context
+    if args.vision and args.release not in VISION_RELEASES:
+        raise ValueError(f'--vision is not available for the {args.release} release')
+    if args.vision and prefix_caching_enabled(args) and not chat:
+        raise ValueError('--vision is not qualified with the experimental --prefix-caching on outside the long-context mode')
+    if args.vision and chat and not long_w3:
+        raise ValueError('--vision in the long-context mode needs the 3-bit W3A4 weights (set PAITON_W3ROT_DIR or '
+                         '--weights w3a4); with MXFP4 use it in the 65K mode')
+    if args.vision and long_w3 and context > W3_LONG_VISION_MAX_CONTEXT:
+        raise ValueError(f'--vision in the long-context mode holds up to --context {W3_LONG_VISION_MAX_CONTEXT} '
+                         f'(measured cache capacity with the vision encoder loaded)')
+    if chat and not long_w3 and context > MXFP4_LONG_MAX_CONTEXT:
+        raise ValueError(f'--context {context} needs the 3-bit W3A4 weights: the MXFP4 long-context mode keeps an '
+                         f'8 GiB fp8 cache of 231,067 tokens and is tested up to --context {MXFP4_LONG_MAX_CONTEXT}')
     sequences = args.max_num_seqs if args.max_num_seqs is not None else (1 if compact_graphs else None)
     # don't increase max_num_batched_tokens, keep it at 1024 or tool calling gets buggy quickly!
     batched_tokens = args.max_num_batched_tokens if args.max_num_batched_tokens is not None else (1024 if compact_graphs else None)
@@ -276,10 +352,14 @@ def engine_command(args, weights='mxfp4'):
     if cache is None:
         if args.gpu_memory_utilization is not None:
             cache = 'auto'
+        elif args.vision and long_w3:
+            cache = W3_LONG_VISION_KV_CACHE_BYTES
+        elif desktop:
+            cache = 2 * 1024**3          # the desktop profile keeps its 2 GiB budget, with or without --vision
+        elif chat and long_w3:
+            cache = W3_LONG_KV4_CACHE_BYTES if kv_cache_mode(args, weights) == 'kv4' else W3_LONG_KV_CACHE_BYTES
         elif chat:
             cache = 8 * 1024**3
-        elif desktop:
-            cache = 2 * 1024**3
         elif args.vision:
             cache = VISION_KV_CACHE_BYTES[weights, kv_cache_mode(args, weights)]
         elif weights == 'w3a4':
@@ -315,6 +395,8 @@ def engine_command(args, weights='mxfp4'):
                     json.dumps({'enable_thinking': thinking == 'on'})]
     if chat:
         command.append('--enable-prompt-tokens-details')
+    if args.long_prefill_threshold is not None:
+        command += ['--long-prefill-token-threshold', str(args.long_prefill_threshold)]
     return command
 
 
@@ -378,7 +460,10 @@ def docker_command(args, environment):
         command += ['-e', 'RADIANCE_GDN_LAZY=0']
     if args.profile == 'chat' or weights == 'w3a4' or args.vision:
         # The allocator setting the chat profile, the W3A4 KV budget and the vision budgets were measured with.
-        command += ['-e', 'PYTORCH_ALLOC_CONF=max_split_size_mb:64']
+        allocator = 'max_split_size_mb:64'
+        if args.profile == 'chat' and weights == 'w3a4' and not args.vision:
+            allocator += f',per_process_memory_fraction:{W3_LONG_MEMORY_FRACTION}'
+        command += ['-e', 'PYTORCH_ALLOC_CONF=' + allocator]
     if weights == 'mxfp4' and args.release in W3_RELEASES:
         # All three flags: the runtime rejects W3A4 prefill without W3 decode.
         for variable in W3_FLAGS:

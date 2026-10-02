@@ -135,7 +135,7 @@
     "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py": {
       "overlay": "overlays/vllm/v1/core/kv_cache_utils.py",
       "original_sha256": "5294bef00c2f127f672a37eda9acbe440418f01622ef49b9be57761c54ebd7f6",
-      "overlay_sha256": "96625eb931c1ece491c0c3194c2c26576aa56b6b45c6500ecaf4198e6583c38e"
+      "overlay_sha256": "7b99dfda0978c27dc575a772f55589bdcceee5fab55d707646db2430ec9e02da"
     },
     "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/async_scheduler.py": {
       "overlay": "overlays/vllm/v1/core/sched/async_scheduler.py",
@@ -145,7 +145,7 @@
     "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py": {
       "overlay": "overlays/vllm/v1/core/sched/scheduler.py",
       "original_sha256": "abca7134821e2fb5cc8572df5c4a0b570ecf702646254327bc786fc452074983",
-      "overlay_sha256": "4762cc252945ebfa812da34398cd114ec8538dabb68b15e9ea4455e7d961edc9"
+      "overlay_sha256": "f7283bfa4acd9405380198f46b8f240d54a060d8c95dbcc9145744e0d4dcee18"
     },
     "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py": {
       "overlay": "overlays/vllm/v1/engine/core.py",
